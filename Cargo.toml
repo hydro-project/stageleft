@@ -1,0 +1,17 @@
+[workspace]
+
+# See "Adding new crates" and "Moving crates" addendum sections in `RELEASING.md`
+members = [
+    "stageleft",
+    "stageleft_macro",
+    "stageleft_test",
+    "stageleft_test_macro",
+    "stageleft_tool",
+]
+
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/hydro-project/stageleft"
