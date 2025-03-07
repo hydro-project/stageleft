@@ -5,7 +5,6 @@ version = "0.0.0"
 edition = "2024"
 
 [features]
-stageleft_devel = []
 test_feature = []
 
 [dependencies]
