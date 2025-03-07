@@ -1,3 +1,4 @@
+#![cfg_attr(stageleft_macro, allow(dead_code))]
 stageleft::stageleft_crate!(stageleft_test_macro);
 
 use stageleft::{BorrowBounds, IntoQuotedOnce, Quoted, RuntimeData, q};
@@ -43,6 +44,20 @@ fn crate_paths<'a>(_ctx: BorrowBounds<'a>) -> impl Quoted<'a, bool> {
     q!(crate::my_top_level_function())
 }
 
+#[stageleft::entry]
+fn local_paths<'a>(_ctx: BorrowBounds<'a>) -> impl Quoted<'a, bool> {
+    q!(my_top_level_function())
+}
+
+#[stageleft::entry]
+fn captured_closure<'a>(_ctx: BorrowBounds<'a>) -> impl Quoted<'a, bool> {
+    let closure = q!(|| true);
+    q!({
+        let closure = closure;
+        closure()
+    })
+}
+
 #[cfg(stageleft_runtime)]
 #[cfg(test)]
 mod tests {
@@ -67,6 +82,21 @@ mod tests {
     }
 
     #[test]
+    fn test_crate_paths() {
+        assert_eq!(crate_paths!(), true);
+    }
+
+    #[test]
+    fn test_local_paths() {
+        assert_eq!(local_paths!(), true);
+    }
+
+    #[test]
+    fn test_captured_closure() {
+        assert_eq!(captured_closure!(), true);
+    }
+
+    #[test]
     fn test_submodule_private_struct() {
         let result = submodule::private_struct!();
         assert_eq!(result, 1);
@@ -74,7 +104,7 @@ mod tests {
 
     #[test]
     fn test_submodule_public_struct() {
-        let result = submodule::public_struct!();
+        let result: submodule::PublicStruct = submodule::public_struct!();
         assert_eq!(result.a, 1);
     }
 }
