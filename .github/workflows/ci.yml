@@ -43,11 +43,9 @@ jobs:
           components: rustfmt, clippy
 
       - name: Run sccache-cache
-        if: matrix.rust_release == 'pinned-nightly'
         uses: mozilla-actions/sccache-action@v0.0.4
 
       - name: Set Rust caching env vars
-        if: matrix.rust_release == 'pinned-nightly'
         uses: actions/github-script@v6
         with:
           script: |
@@ -89,11 +87,9 @@ jobs:
           toolchain: stable
 
       - name: Run sccache-cache
-        if: matrix.rust_release == 'pinned-nightly'
         uses: mozilla-actions/sccache-action@v0.0.4
 
       - name: Set Rust caching env vars
-        if: matrix.rust_release == 'pinned-nightly'
         uses: actions/github-script@v6
         with:
           script: |
