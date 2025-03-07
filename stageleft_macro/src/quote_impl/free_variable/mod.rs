@@ -174,6 +174,24 @@ impl syn::visit_mut::VisitMut for FreeVariableVisitor {
         self.current_scope.insert_term(i.ident.clone());
     }
 
+    fn visit_expr_call_mut(&mut self, i: &mut syn::ExprCall) {
+        if let syn::Expr::Path(path) = i.func.as_mut() {
+            if path.path.segments.len() == 1 {
+                // skip, don't emit a free variable, assume that it's a
+                // fn call and not a closure call; for closure calls, we
+                // require the user to manually capture it with a `let` binding
+            } else {
+                syn::visit_mut::visit_expr_mut(self, &mut i.func);
+            }
+        } else {
+            syn::visit_mut::visit_expr_mut(self, &mut i.func);
+        }
+
+        for arg in &mut i.args {
+            self.visit_expr_mut(arg);
+        }
+    }
+
     fn visit_expr_method_call_mut(&mut self, i: &mut syn::ExprMethodCall) {
         syn::visit_mut::visit_expr_mut(self, &mut i.receiver);
         for arg in &mut i.args {
