@@ -1,0 +1,8 @@
+[package]
+name = "stageleft_test_downstream"
+publish = false
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
+stageleft_test = { path = "../stageleft_test" }
