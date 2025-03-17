@@ -70,6 +70,13 @@ macro_rules! stageleft_crate {
                 $crate::PATH_SEPARATOR!(),
                 "lib_pub.rs"
             ));
+
+            #[cfg(not(feature = "stageleft_devel"))]
+            include!(concat!(
+                env!("OUT_DIR"),
+                $crate::PATH_SEPARATOR!(),
+                "staged_deps.rs"
+            ));
         }
     };
 }
@@ -428,12 +435,14 @@ impl<
         let expr: syn::Expr = syn::parse2(expr_tokens).unwrap();
         let with_env = if let Some(module_path) = module_path {
             quote!({
+                use #final_crate_root::__staged::__deps::*;
                 use #final_crate_root::__staged::#module_path::*;
                 #(#instantiated_free_variables)*
                 #expr
             })
         } else {
             quote!({
+                use #final_crate_root::__staged::__deps::*;
                 use #final_crate_root::__staged::*;
                 #(#instantiated_free_variables)*
                 #expr
