@@ -1,11 +1,10 @@
 [workspace]
-
-# See "Adding new crates" and "Moving crates" addendum sections in `RELEASING.md`
 members = [
     "stageleft",
     "stageleft_macro",
     "stageleft_test",
     "stageleft_test_macro",
+    "stageleft_test_downstream",
     "stageleft_tool",
 ]
 

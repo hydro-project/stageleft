@@ -290,6 +290,10 @@ pub fn entry(
         }
     });
 
+    if input.sig.inputs.is_empty() {
+        panic!("A Stageleft entry must have at least one argument, for the context");
+    }
+
     let expected_arg_count = input.sig.inputs.len() - 1;
 
     let pound = Punct::new('#', Spacing::Alone);
