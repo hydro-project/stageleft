@@ -8,6 +8,7 @@ use sha2::{Digest, Sha256};
 use syn::visit::Visit;
 use syn::visit_mut::VisitMut;
 use syn::{UsePath, Visibility, parse_quote};
+use toml_edit::DocumentMut;
 
 struct GenMacroVistor {
     exported_macros: BTreeSet<(String, String)>,
@@ -402,7 +403,78 @@ pub fn gen_final_helper() {
     )
     .unwrap();
 
+    // based on proc-macro-crate
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
+    let manifest_path = Path::new(&manifest_dir).join("Cargo.toml");
+    let toml_parsed = fs::read_to_string(&manifest_path)
+        .unwrap()
+        .parse::<DocumentMut>()
+        .unwrap();
+    let all_crate_names = toml_parsed["dependencies"]
+        .as_table()
+        .unwrap()
+        .iter()
+        .filter(|(_, v)| !v.get("optional").and_then(|o| o.as_bool()).unwrap_or(false))
+        .map(|(name, v)| {
+            v.get("package")
+                .and_then(|p| p.as_str())
+                .unwrap_or(name)
+                .to_string()
+                .replace('-', "_")
+        })
+        .collect::<Vec<_>>();
+
+    let deps_reexported = all_crate_names
+        .iter()
+        .map(|name| {
+            let name_ident = syn::Ident::new(name, Span::call_site());
+            parse_quote! {
+                pub use #name_ident;
+            }
+        })
+        .collect::<Vec<syn::Item>>();
+
+    let stageleft_name = match proc_macro_crate::crate_name("stageleft").unwrap() {
+        proc_macro_crate::FoundCrate::Itself => syn::Ident::new("stageleft", Span::call_site()),
+        proc_macro_crate::FoundCrate::Name(name) => syn::Ident::new(&name, Span::call_site()),
+    };
+
+    let deps_reexported_runtime = all_crate_names
+        .iter()
+        .map(|name| {
+            parse_quote! {
+                #stageleft_name::add_private_reexport(
+                    vec![#name],
+                    vec![
+                        option_env!("STAGELEFT_FINAL_CRATE_NAME").unwrap_or(env!("CARGO_PKG_NAME")),
+                        "__staged",
+                        "__deps",
+                        #name
+                    ]
+                );
+            }
+        })
+        .collect::<Vec<syn::Stmt>>();
+
+    let deps_file: syn::File = syn::parse_quote! {
+        pub mod __deps {
+            #(#deps_reexported)*
+
+            #[#stageleft_name::internal::ctor::ctor(crate_path = #stageleft_name::internal::ctor)]
+            fn __init() {
+                #(#deps_reexported_runtime)*
+            }
+        }
+    };
+
+    fs::write(
+        Path::new(&out_dir).join("staged_deps.rs"),
+        prettyplease::unparse(&deps_file),
+    )
+    .unwrap();
+
     println!("cargo::rerun-if-changed=build.rs");
+    println!("cargo::rerun-if-changed=Cargo.toml");
     println!("cargo::rerun-if-changed=src");
 }
 

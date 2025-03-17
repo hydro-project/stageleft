@@ -6,7 +6,9 @@ use proc_macro_crate::FoundCrate;
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
 
+#[doc(hidden)]
 pub mod internal {
+    pub use ctor;
     pub use proc_macro2::{Span, TokenStream};
     pub use quote::quote;
     pub use {proc_macro_crate, proc_macro2, syn};
@@ -55,22 +57,7 @@ macro_rules! stageleft_crate {
         ));
 
         #[cfg(not(stageleft_macro))]
-        #[doc(hidden)]
-        #[allow(
-            unused,
-            ambiguous_glob_reexports,
-            unexpected_cfgs,
-            clippy::suspicious_else_formatting,
-            reason = "generated code"
-        )]
-        pub mod __staged {
-            #[cfg(not(feature = "stageleft_devel"))]
-            include!(concat!(
-                env!("OUT_DIR"),
-                $crate::PATH_SEPARATOR!(),
-                "lib_pub.rs"
-            ));
-        }
+        $crate::stageleft_no_entry_crate!();
     };
 }
 
@@ -92,6 +79,13 @@ macro_rules! stageleft_no_entry_crate {
                 env!("OUT_DIR"),
                 $crate::PATH_SEPARATOR!(),
                 "lib_pub.rs"
+            ));
+
+            #[cfg(not(feature = "stageleft_devel"))]
+            include!(concat!(
+                env!("OUT_DIR"),
+                $crate::PATH_SEPARATOR!(),
+                "staged_deps.rs"
             ));
         }
     };
@@ -428,12 +422,14 @@ impl<
         let expr: syn::Expr = syn::parse2(expr_tokens).unwrap();
         let with_env = if let Some(module_path) = module_path {
             quote!({
+                use #final_crate_root::__staged::__deps::*;
                 use #final_crate_root::__staged::#module_path::*;
                 #(#instantiated_free_variables)*
                 #expr
             })
         } else {
             quote!({
+                use #final_crate_root::__staged::__deps::*;
                 use #final_crate_root::__staged::*;
                 #(#instantiated_free_variables)*
                 #expr

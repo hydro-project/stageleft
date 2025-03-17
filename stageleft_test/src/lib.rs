@@ -6,6 +6,11 @@ pub(crate) mod features;
 pub(crate) mod submodule;
 
 #[stageleft::entry]
+pub fn using_rand(_ctx: BorrowBounds<'_>) -> impl Quoted<i32> {
+    q!(rand::random::<i32>())
+}
+
+#[stageleft::entry]
 fn raise_to_power(_ctx: BorrowBounds<'_>, value: RuntimeData<i32>, power: u32) -> impl Quoted<i32> {
     if power == 1 {
         q!(value).boxed()
