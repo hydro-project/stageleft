@@ -4,5 +4,8 @@ publish = false
 version = "0.0.0"
 edition = "2024"
 
+[package.metadata.release]
+release = false
+
 [dependencies]
 stageleft_test = { path = "../stageleft_test" }

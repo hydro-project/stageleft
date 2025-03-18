@@ -63,7 +63,7 @@ The main crate `foo` will need the following `Cargo.toml`:
 // ...
 
 [dependencies]
-stageleft = "0.6.0"
+stageleft = "0.7.0"
 foo_macro = { path = "../foo_macro" }
 
 [build-dependencies]

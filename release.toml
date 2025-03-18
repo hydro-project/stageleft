@@ -1,0 +1,8 @@
+pre-release-replacements = [
+  {file="../README.md", search="stageleft = .*", replace="stageleft = \"{{version}}\""},
+  {file="../README.md", search="stageleft_tool = .*", replace="stageleft_tool = \"{{version}}\""},
+]
+
+consolidate-commits = true
+shared-version = true
+

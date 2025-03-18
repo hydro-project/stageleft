@@ -4,14 +4,17 @@ publish = false
 version = "0.0.0"
 edition = "2024"
 
+[package.metadata.release]
+release = false
+
 [features]
 test_feature = []
 
 [dependencies]
-stageleft = { path = "../stageleft", version = "^0.6.0" }
+stageleft = { path = "../stageleft", version = "^0.7.0" }
 stageleft_test_macro = { path = "../stageleft_test_macro" }
 
 rand = { version = "0.9.0", features = ["thread_rng"] }
 
 [build-dependencies]
-stageleft_tool = { path = "../stageleft_tool", version = "^0.5.0" }
+stageleft_tool = { path = "../stageleft_tool", version = "^0.6.0" }
