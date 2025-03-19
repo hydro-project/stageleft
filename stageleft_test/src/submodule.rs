@@ -24,3 +24,12 @@ pub fn private_struct(_ctx: BorrowBounds<'_>) -> impl Quoted<u32> {
 pub fn public_struct(_ctx: BorrowBounds<'_>) -> impl Quoted<PublicStruct> {
     q!(PublicStruct { a: 1 })
 }
+
+fn my_local_function() -> bool {
+    true
+}
+
+#[stageleft::entry]
+pub fn local_paths<'a>(_ctx: BorrowBounds<'a>) -> impl Quoted<'a, bool> {
+    q!(self::my_local_function())
+}
