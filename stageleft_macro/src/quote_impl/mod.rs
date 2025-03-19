@@ -1,6 +1,6 @@
 use proc_macro2::{Span, TokenStream};
-use quote::quote;
-use syn::visit::Visit;
+use quote::{ToTokens, quote};
+use syn::visit_mut::VisitMut;
 
 use self::free_variable::FreeVariableVisitor;
 
@@ -8,20 +8,25 @@ mod free_variable;
 
 pub fn q_impl(root: TokenStream, toks: proc_macro2::TokenStream) -> TokenStream {
     let mut visitor = FreeVariableVisitor::default();
-    if let Ok(expr) = syn::parse2::<syn::Expr>(toks.clone()) {
-        visitor.visit_expr(&expr);
-    }
+    let rewritten_toks = if let Ok(mut expr) = syn::parse2::<syn::Expr>(toks.clone()) {
+        visitor.visit_expr_mut(&mut expr);
+        expr.into_token_stream()
+    } else {
+        toks
+    };
 
     let unitialized_free_variables = visitor.free_variables.iter().map(|i| {
-        let ident_str = i.to_string();
-        let i_without_span = syn::Ident::new(&ident_str, Span::call_site());
+        let i_without_span = syn::Ident::new(&i.to_string(), Span::call_site());
+
+        let ident_shadow_str = format!("{}__free", i);
+        let i_shadow_ident = syn::Ident::new(&ident_shadow_str, Span::call_site());
 
         quote!(
             #[allow(unused, non_upper_case_globals, non_snake_case)]
-            let #i_without_span = {
+            let #i_shadow_ident = {
                 let _out = ::#root::runtime_support::FreeVariableWithContext::uninitialized(&#i_without_span, __stageleft_ctx);
                 __output.captures.push(::#root::internal::Capture {
-                    ident: #ident_str,
+                    ident: #ident_shadow_str,
                     tokens: ::#root::runtime_support::FreeVariableWithContext::to_tokens(#i_without_span, __stageleft_ctx),
                 });
                 _out
@@ -30,10 +35,11 @@ pub fn q_impl(root: TokenStream, toks: proc_macro2::TokenStream) -> TokenStream 
     });
 
     let uninit_forgets = visitor.free_variables.iter().map(|i| {
-        let i_without_span = syn::Ident::new(&i.to_string(), Span::call_site());
+        let i_shadow_ident = syn::Ident::new(&format!("{}__free", i), Span::call_site());
+
         quote!(
             #[allow(unused, non_upper_case_globals, non_snake_case)]
-            ::std::mem::forget(#i_without_span);
+            ::std::mem::forget(#i_shadow_ident);
         )
     });
 
@@ -42,7 +48,7 @@ pub fn q_impl(root: TokenStream, toks: proc_macro2::TokenStream) -> TokenStream 
         // for unknown reasons, Rust Analyzer completions break if we emit the input as a string as well :(
         "".to_string()
     } else {
-        toks.to_string()
+        rewritten_toks.to_string()
     };
 
     quote!({
@@ -62,7 +68,7 @@ pub fn q_impl(root: TokenStream, toks: proc_macro2::TokenStream) -> TokenStream 
 
             #[allow(unreachable_code, unused_qualifications)]
             {
-                #toks
+                #rewritten_toks
             }
         }
     })
