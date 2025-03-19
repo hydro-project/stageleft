@@ -5,7 +5,12 @@ use std::mem::MaybeUninit;
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
 
-use crate::{QuotedWithContext, internal::QuoteTokens};
+use crate::QuotedWithContext;
+
+pub struct QuoteTokens {
+    pub prelude: Option<TokenStream>,
+    pub expr: Option<TokenStream>,
+}
 
 pub fn get_final_crate_name(crate_name: &str) -> TokenStream {
     let final_crate = proc_macro_crate::crate_name(crate_name)

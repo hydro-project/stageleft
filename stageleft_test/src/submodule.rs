@@ -24,3 +24,21 @@ pub fn private_struct(_ctx: BorrowBounds<'_>) -> impl Quoted<u32> {
 pub fn public_struct(_ctx: BorrowBounds<'_>) -> impl Quoted<PublicStruct> {
     q!(PublicStruct { a: 1 })
 }
+
+fn my_local_function() -> bool {
+    true
+}
+
+#[stageleft::entry]
+pub fn self_path<'a>(_ctx: BorrowBounds<'a>) -> impl Quoted<'a, bool> {
+    q!(self::my_local_function())
+}
+
+pub mod subsubmodule {
+    use stageleft::{BorrowBounds, Quoted, q};
+
+    #[stageleft::entry]
+    pub fn super_path<'a>(_ctx: BorrowBounds<'a>) -> impl Quoted<'a, i32> {
+        q!(super::super::GLOBAL_VAR)
+    }
+}
