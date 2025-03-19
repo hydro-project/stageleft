@@ -5,7 +5,7 @@ use std::mem::MaybeUninit;
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
 
-use crate::QuotedWithContext;
+use crate::{QuotedWithContext, internal::QuoteTokens};
 
 pub fn get_final_crate_name(crate_name: &str) -> TokenStream {
     let final_crate = proc_macro_crate::crate_name(crate_name)
@@ -78,7 +78,7 @@ impl_parse_from_literal_numeric!(u8, u16, u32, u64, u128, usize);
 pub trait FreeVariableWithContext<Ctx> {
     type O;
 
-    fn to_tokens(self, ctx: &Ctx) -> (Option<TokenStream>, Option<TokenStream>)
+    fn to_tokens(self, ctx: &Ctx) -> QuoteTokens
     where
         Self: Sized;
 
@@ -91,7 +91,7 @@ pub trait FreeVariableWithContext<Ctx> {
 }
 
 pub trait FreeVariable<O>: FreeVariableWithContext<(), O = O> {
-    fn to_tokens(self) -> (Option<TokenStream>, Option<TokenStream>)
+    fn to_tokens(self) -> QuoteTokens
     where
         Self: Sized,
     {
@@ -114,8 +114,11 @@ macro_rules! impl_free_variable_from_literal_numeric {
             impl <Ctx> FreeVariableWithContext<Ctx> for $ty {
                 type O = $ty;
 
-                fn to_tokens(self, _ctx: &Ctx) -> (Option<TokenStream>, Option<TokenStream>) {
-                    (None, Some(quote!(#self)))
+                fn to_tokens(self, _ctx: &Ctx) -> QuoteTokens {
+                    QuoteTokens {
+                        prelude: None,
+                        expr: Some(quote!(#self))
+                    }
                 }
             }
 
@@ -130,8 +133,11 @@ impl_free_variable_from_literal_numeric!(u8, u16, u32, u64, u128, usize);
 impl<Ctx> FreeVariableWithContext<Ctx> for &str {
     type O = &'static str;
 
-    fn to_tokens(self, _ctx: &Ctx) -> (Option<TokenStream>, Option<TokenStream>) {
-        (None, Some(quote!(#self)))
+    fn to_tokens(self, _ctx: &Ctx) -> QuoteTokens {
+        QuoteTokens {
+            prelude: None,
+            expr: Some(quote!(#self)),
+        }
     }
 }
 
@@ -169,16 +175,16 @@ pub fn create_import<T>(
 impl<T, Ctx> FreeVariableWithContext<Ctx> for Import<T> {
     type O = T;
 
-    fn to_tokens(self, _ctx: &Ctx) -> (Option<TokenStream>, Option<TokenStream>) {
+    fn to_tokens(self, _ctx: &Ctx) -> QuoteTokens {
         let final_crate_root = get_final_crate_name(self.crate_name);
 
         let module_path = syn::parse_str::<syn::Path>(self.module_path).unwrap();
         let parsed = syn::parse_str::<syn::Path>(self.path).unwrap();
         let as_ident = syn::Ident::new(self.as_name, Span::call_site());
-        (
-            Some(quote!(use #final_crate_root::#module_path::#parsed as #as_ident;)),
-            None,
-        )
+        QuoteTokens {
+            prelude: Some(quote!(use #final_crate_root::#module_path::#parsed as #as_ident;)),
+            expr: None,
+        }
     }
 }
 

@@ -1,9 +1,9 @@
 use core::panic;
 use std::marker::PhantomData;
 
-use internal::CaptureVec;
+use internal::{QuoteTokens, QuotedOutput};
 use proc_macro_crate::FoundCrate;
-use proc_macro2::{Span, TokenStream};
+use proc_macro2::Span;
 use quote::quote;
 
 #[doc(hidden)]
@@ -13,7 +13,22 @@ pub mod internal {
     pub use quote::quote;
     pub use {proc_macro_crate, proc_macro2, syn};
 
-    pub type CaptureVec = Vec<(String, (Option<TokenStream>, Option<TokenStream>))>;
+    pub struct QuoteTokens {
+        pub prelude: Option<TokenStream>,
+        pub expr: Option<TokenStream>,
+    }
+
+    pub struct Capture {
+        pub ident: &'static str,
+        pub tokens: QuoteTokens,
+    }
+
+    pub struct QuotedOutput {
+        pub module_path: &'static str,
+        pub crate_name: &'static str,
+        pub tokens: &'static str,
+        pub captures: Vec<Capture>,
+    }
 }
 
 pub use stageleft_macro::{entry, q, quse_fn, top_level_mod};
@@ -112,12 +127,12 @@ pub trait QuotedWithContext<'a, T, Ctx>: FreeVariableWithContext<Ctx, O = T> {
     where
         Self: Sized,
     {
-        let (prelude, value) = self.to_tokens(ctx);
-        if prelude.is_some() {
+        let res = self.to_tokens(ctx);
+        if res.prelude.is_some() {
             panic!("Quoted value should not have prelude");
         }
 
-        syn::parse2(value.unwrap()).unwrap()
+        syn::parse2(res.expr.unwrap()).unwrap()
     }
 
     fn splice_typed_ctx(self, ctx: &Ctx) -> syn::Expr
@@ -304,16 +319,7 @@ fn stageleft_root() -> syn::Ident {
 }
 
 pub trait IntoQuotedOnce<'a, T, Ctx>:
-    for<'b> FnOnce(
-        &'b Ctx,
-        &mut String,
-        &mut &'static str,
-        &mut &'static str,
-        &mut CaptureVec,
-        bool,
-    ) -> T
-    + 'a
-    + QuotedWithContext<'a, T, Ctx>
+    for<'b> FnOnce(&'b Ctx, &mut QuotedOutput) -> T + 'a + QuotedWithContext<'a, T, Ctx>
 {
     fn boxed(self) -> Box<dyn IntoQuotedOnce<'a, T, Ctx>>
     where
@@ -323,83 +329,51 @@ pub trait IntoQuotedOnce<'a, T, Ctx>:
     }
 }
 
-impl<
-    'a,
-    T,
-    Ctx,
-    F: for<'b> FnOnce(
-            &'b Ctx,
-            &mut String,
-            &mut &'static str,
-            &mut &'static str,
-            &mut CaptureVec,
-            bool,
-        ) -> T
-        + 'a,
-> QuotedWithContext<'a, T, Ctx> for F
+impl<'a, T, Ctx, F: for<'b> FnOnce(&'b Ctx, &mut QuotedOutput) -> T + 'a>
+    QuotedWithContext<'a, T, Ctx> for F
 {
 }
 
-impl<
-    'a,
-    T,
-    Ctx,
-    F: for<'b> FnOnce(
-            &'b Ctx,
-            &mut String,
-            &mut &'static str,
-            &mut &'static str,
-            &mut CaptureVec,
-            bool,
-        ) -> T
-        + 'a,
-> IntoQuotedOnce<'a, T, Ctx> for F
+impl<'a, T, Ctx, F: for<'b> FnOnce(&'b Ctx, &mut QuotedOutput) -> T + 'a> IntoQuotedOnce<'a, T, Ctx>
+    for F
 {
 }
 
-impl<
-    T,
-    Ctx,
-    F: for<'b> FnOnce(
-        &'b Ctx,
-        &mut String,
-        &mut &'static str,
-        &mut &'static str,
-        &mut CaptureVec,
-        bool,
-    ) -> T,
-> FreeVariableWithContext<Ctx> for F
+impl<T, Ctx, F: for<'b> FnOnce(&'b Ctx, &mut QuotedOutput) -> T> FreeVariableWithContext<Ctx>
+    for F
 {
     type O = T;
 
-    fn to_tokens(self, ctx: &Ctx) -> (Option<TokenStream>, Option<TokenStream>) {
-        let mut module_path = String::new();
-        let mut crate_name = "";
-        let mut expr_tokens = "";
-        let mut free_variables = Vec::new();
-        // this is an uninit value so we can't drop it
-        std::mem::forget(self(
-            ctx,
-            &mut module_path,
-            &mut crate_name,
-            &mut expr_tokens,
-            &mut free_variables,
-            false,
-        ));
+    fn to_tokens(self, ctx: &Ctx) -> QuoteTokens {
+        let mut output = QuotedOutput {
+            module_path: "",
+            crate_name: "",
+            tokens: "",
+            captures: Vec::new(),
+        };
 
-        let instantiated_free_variables = free_variables.iter().flat_map(|(ident, value)| {
-            let ident = syn::Ident::new(ident, Span::call_site());
-            value.0.iter().map(|prelude| quote!(#prelude)).chain(
-                value
-                    .1
-                    .iter()
-                    .map(move |value| quote!(let #ident = #value;)),
-            )
+        // this is an uninit value so we can't drop it
+        std::mem::forget(self(ctx, &mut output));
+
+        let instantiated_free_variables = output.captures.iter().flat_map(|capture| {
+            let ident = syn::Ident::new(capture.ident, Span::call_site());
+            capture
+                .tokens
+                .prelude
+                .iter()
+                .map(|prelude| quote!(#prelude))
+                .chain(
+                    capture
+                        .tokens
+                        .expr
+                        .iter()
+                        .map(move |value| quote!(let #ident = #value;)),
+                )
         });
 
-        let final_crate_root = get_final_crate_name(crate_name);
+        let final_crate_root = get_final_crate_name(output.crate_name);
 
-        let module_path: syn::Path = syn::parse_str(&module_path).unwrap();
+        let module_path: syn::Path = syn::parse_str(output.module_path).unwrap();
         let module_path_segments = module_path
             .segments
             .iter()
@@ -419,7 +393,7 @@ impl<
             })
         };
 
-        let expr: syn::Expr = syn::parse_str(expr_tokens).unwrap();
+        let expr: syn::Expr = syn::parse_str(output.tokens).unwrap();
         let with_env = if let Some(module_path) = module_path {
             quote!({
                 use #final_crate_root::__staged::__deps::*;
@@ -436,23 +410,16 @@ impl<
             })
         };
 
-        (None, Some(with_env))
+        QuoteTokens {
+            prelude: None,
+            expr: Some(with_env),
+        }
     }
 }
 
-pub trait IntoQuotedMut<'a, T, Ctx>:
-    FnMut(&Ctx, &mut String, &mut &'static str, &mut &'static str, &mut CaptureVec, bool) -> T + 'a
-{
-}
+pub trait IntoQuotedMut<'a, T, Ctx>: FnMut(&Ctx, &mut QuotedOutput) -> T + 'a {}
 
-impl<
-    'a,
-    T,
-    Ctx,
-    F: FnMut(&Ctx, &mut String, &mut &'static str, &mut &'static str, &mut CaptureVec, bool) -> T + 'a,
-> IntoQuotedMut<'a, T, Ctx> for F
-{
-}
+impl<'a, T, Ctx, F: FnMut(&Ctx, &mut QuotedOutput) -> T + 'a> IntoQuotedMut<'a, T, Ctx> for F {}
 
 /// Represents a piece of data that will be passed into the generated code
 pub struct RuntimeData<T> {
@@ -482,8 +449,11 @@ impl<T> RuntimeData<T> {
 impl<T, Ctx> FreeVariableWithContext<Ctx> for RuntimeData<T> {
     type O = T;
 
-    fn to_tokens(self, _ctx: &Ctx) -> (Option<TokenStream>, Option<TokenStream>) {
+    fn to_tokens(self, _ctx: &Ctx) -> QuoteTokens {
         let ident = syn::Ident::new(self.ident, Span::call_site());
-        (None, Some(quote!(#ident)))
+        QuoteTokens {
+            prelude: None,
+            expr: Some(quote!(#ident)),
+        }
     }
 }
