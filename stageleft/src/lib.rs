@@ -1,22 +1,19 @@
 use core::panic;
 use std::marker::PhantomData;
 
-use internal::{QuoteTokens, QuotedOutput};
+use internal::QuotedOutput;
 use proc_macro_crate::FoundCrate;
 use proc_macro2::Span;
 use quote::quote;
 
 #[doc(hidden)]
 pub mod internal {
+    use crate::runtime_support::QuoteTokens;
     pub use ctor;
     pub use proc_macro2::{Span, TokenStream};
     pub use quote::quote;
-    pub use {proc_macro_crate, proc_macro2, syn};
 
-    pub struct QuoteTokens {
-        pub prelude: Option<TokenStream>,
-        pub expr: Option<TokenStream>,
-    }
+    pub use {proc_macro_crate, proc_macro2, syn};
 
     pub struct Capture {
         pub ident: &'static str,
@@ -31,10 +28,14 @@ pub mod internal {
     }
 }
 
+mod rewrite_paths;
+
+use rewrite_paths::RewritePaths;
 pub use stageleft_macro::{entry, q, quse_fn, top_level_mod};
 
 pub mod runtime_support;
-use runtime_support::FreeVariableWithContext;
+use runtime_support::{FreeVariableWithContext, QuoteTokens};
+use syn::visit_mut::VisitMut;
 
 use crate::runtime_support::get_final_crate_name;
 
@@ -393,7 +394,15 @@ impl<T, Ctx, F: for<'b> FnOnce(&'b Ctx, &mut QuotedOutput) -> T> FreeVariableWit
             })
         };
 
-        let expr: syn::Expr = syn::parse_str(output.tokens).unwrap();
+        let mut expr: syn::Expr = syn::parse_str(output.tokens).unwrap();
+        RewritePaths {
+            crate_name: syn::parse_quote!(#final_crate_root::__staged),
+            module_path: module_path
+                .clone()
+                .map(|module_path| syn::parse_quote!(#final_crate_root::__staged::#module_path)),
+        }
+        .visit_expr_mut(&mut expr);
+
         let with_env = if let Some(module_path) = module_path {
             quote!({
                 use #final_crate_root::__staged::__deps::*;
