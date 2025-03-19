@@ -308,7 +308,7 @@ pub trait IntoQuotedOnce<'a, T, Ctx>:
         &'b Ctx,
         &mut String,
         &mut &'static str,
-        &mut TokenStream,
+        &mut &'static str,
         &mut CaptureVec,
         bool,
     ) -> T
@@ -331,7 +331,7 @@ impl<
             &'b Ctx,
             &mut String,
             &mut &'static str,
-            &mut TokenStream,
+            &mut &'static str,
             &mut CaptureVec,
             bool,
         ) -> T
@@ -348,7 +348,7 @@ impl<
             &'b Ctx,
             &mut String,
             &mut &'static str,
-            &mut TokenStream,
+            &mut &'static str,
             &mut CaptureVec,
             bool,
         ) -> T
@@ -364,7 +364,7 @@ impl<
         &'b Ctx,
         &mut String,
         &mut &'static str,
-        &mut TokenStream,
+        &mut &'static str,
         &mut CaptureVec,
         bool,
     ) -> T,
@@ -375,7 +375,7 @@ impl<
     fn to_tokens(self, ctx: &Ctx) -> (Option<TokenStream>, Option<TokenStream>) {
         let mut module_path = String::new();
         let mut crate_name = "";
-        let mut expr_tokens = TokenStream::new();
+        let mut expr_tokens = "";
         let mut free_variables = Vec::new();
         // this is an uninit value so we can't drop it
         std::mem::forget(self(
@@ -419,7 +419,7 @@ impl<
             })
         };
 
-        let expr: syn::Expr = syn::parse2(expr_tokens).unwrap();
+        let expr: syn::Expr = syn::parse_str(expr_tokens).unwrap();
         let with_env = if let Some(module_path) = module_path {
             quote!({
                 use #final_crate_root::__staged::__deps::*;
@@ -441,7 +441,7 @@ impl<
 }
 
 pub trait IntoQuotedMut<'a, T, Ctx>:
-    FnMut(&Ctx, &mut String, &mut &'static str, &mut TokenStream, &mut CaptureVec, bool) -> T + 'a
+    FnMut(&Ctx, &mut String, &mut &'static str, &mut &'static str, &mut CaptureVec, bool) -> T + 'a
 {
 }
 
@@ -449,7 +449,7 @@ impl<
     'a,
     T,
     Ctx,
-    F: FnMut(&Ctx, &mut String, &mut &'static str, &mut TokenStream, &mut CaptureVec, bool) -> T + 'a,
+    F: FnMut(&Ctx, &mut String, &mut &'static str, &mut &'static str, &mut CaptureVec, bool) -> T + 'a,
 > IntoQuotedMut<'a, T, Ctx> for F
 {
 }

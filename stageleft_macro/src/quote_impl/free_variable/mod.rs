@@ -2,7 +2,6 @@ use std::collections::{BTreeSet, HashSet};
 
 mod prelude;
 use prelude::is_prelude;
-use quote::ToTokens;
 
 #[derive(Debug)]
 pub struct ScopeStack {
@@ -65,25 +64,25 @@ pub struct FreeVariableVisitor {
     pub current_scope: ScopeStack,
 }
 
-impl syn::visit_mut::VisitMut for FreeVariableVisitor {
-    fn visit_expr_closure_mut(&mut self, i: &mut syn::ExprClosure) {
+impl syn::visit::Visit<'_> for FreeVariableVisitor {
+    fn visit_expr_closure(&mut self, i: &syn::ExprClosure) {
         self.current_scope.push();
-        i.inputs.iter_mut().for_each(|input| {
-            self.visit_pat_mut(input);
+        i.inputs.iter().for_each(|input| {
+            self.visit_pat(input);
         });
 
-        syn::visit_mut::visit_expr_closure_mut(self, i);
+        syn::visit::visit_expr_closure(self, i);
 
         self.current_scope.pop();
     }
 
-    fn visit_item_fn_mut(&mut self, i: &mut syn::ItemFn) {
+    fn visit_item_fn(&mut self, i: &syn::ItemFn) {
         self.current_scope.push();
-        syn::visit_mut::visit_item_fn_mut(self, i);
+        syn::visit::visit_item_fn(self, i);
         self.current_scope.pop();
     }
 
-    fn visit_generic_param_mut(&mut self, i: &mut syn::GenericParam) {
+    fn visit_generic_param(&mut self, i: &syn::GenericParam) {
         match i {
             syn::GenericParam::Type(type_param) => {
                 self.current_scope.insert_type(type_param.ident.clone());
@@ -98,174 +97,163 @@ impl syn::visit_mut::VisitMut for FreeVariableVisitor {
         }
     }
 
-    fn visit_block_mut(&mut self, i: &mut syn::Block) {
+    fn visit_block(&mut self, i: &syn::Block) {
         self.current_scope.push();
-        syn::visit_mut::visit_block_mut(self, i);
+        syn::visit::visit_block(self, i);
         self.current_scope.pop();
     }
 
-    fn visit_local_mut(&mut self, i: &mut syn::Local) {
-        i.init.iter_mut().for_each(|init| {
-            syn::visit_mut::visit_local_init_mut(self, init);
+    fn visit_local(&mut self, i: &syn::Local) {
+        i.init.iter().for_each(|init| {
+            syn::visit::visit_local_init(self, init);
         });
-
-        match &mut i.pat {
+        match &i.pat {
             syn::Pat::Ident(pat_ident) => {
                 self.current_scope.insert_term(pat_ident.ident.clone());
             }
             syn::Pat::Type(pat_type) => {
-                self.visit_pat_mut(&mut pat_type.pat);
+                self.visit_pat(&pat_type.pat);
             }
             syn::Pat::Wild(_) => {
                 // Do nothing
             }
             syn::Pat::Tuple(pat_tuple) => {
-                for el in &mut pat_tuple.elems {
-                    self.visit_pat_mut(el);
+                for el in &pat_tuple.elems {
+                    self.visit_pat(el);
                 }
             }
             _ => panic!("Local variables must be identifiers, got {:?}", i.pat),
         }
     }
 
-    fn visit_ident_mut(&mut self, i: &mut proc_macro2::Ident) {
+    fn visit_ident(&mut self, i: &proc_macro2::Ident) {
         if !self.current_scope.contains_term(i) {
             self.free_variables.insert(i.clone());
-            *i = syn::Ident::new(&format!("{}__free", i), i.span());
         }
     }
 
-    fn visit_lifetime_mut(&mut self, i: &mut syn::Lifetime) {
+    fn visit_lifetime(&mut self, i: &syn::Lifetime) {
         if !self.current_scope.contains_type(&i.ident) {
             self.free_variables.insert(i.ident.clone());
-            i.ident = syn::Ident::new(&format!("{}__free", i.ident), i.ident.span());
         }
     }
 
-    fn visit_path_mut(&mut self, i: &mut syn::Path) {
+    fn visit_path(&mut self, i: &syn::Path) {
         if i.leading_colon.is_none() && !is_prelude(&i.segments.first().unwrap().ident) {
             let one_segment = i.segments.len() == 1;
-            let node = i.segments.first_mut().unwrap();
+            let node = i.segments.first().unwrap();
             if one_segment && !self.current_scope.contains_term(&node.ident) {
                 self.free_variables.insert(node.ident.clone());
-                node.ident = syn::Ident::new(&format!("{}__free", node.ident), node.ident.span());
             }
         }
 
-        for node in i.segments.iter_mut() {
-            self.visit_path_arguments_mut(&mut node.arguments);
+        for node in i.segments.iter() {
+            self.visit_path_arguments(&node.arguments);
         }
     }
 
-    fn visit_arm_mut(&mut self, i: &mut syn::Arm) {
+    fn visit_arm(&mut self, i: &syn::Arm) {
         self.current_scope.push();
-        syn::visit_mut::visit_arm_mut(self, i);
+        syn::visit::visit_arm(self, i);
         self.current_scope.pop();
     }
 
-    fn visit_field_pat_mut(&mut self, i: &mut syn::FieldPat) {
-        for it in &mut i.attrs {
-            self.visit_attribute_mut(it);
+    fn visit_field_pat(&mut self, i: &syn::FieldPat) {
+        for it in &i.attrs {
+            self.visit_attribute(it);
         }
-        self.visit_pat_mut(&mut i.pat);
+        self.visit_pat(&i.pat);
     }
 
-    fn visit_pat_ident_mut(&mut self, i: &mut syn::PatIdent) {
+    fn visit_pat_ident(&mut self, i: &syn::PatIdent) {
         self.current_scope.insert_term(i.ident.clone());
     }
 
-    fn visit_expr_call_mut(&mut self, i: &mut syn::ExprCall) {
-        if let syn::Expr::Path(path) = i.func.as_mut() {
+    fn visit_expr_call(&mut self, i: &syn::ExprCall) {
+        if let syn::Expr::Path(path) = &*i.func {
             if path.path.segments.len() == 1 {
                 // skip, don't emit a free variable, assume that it's a
                 // fn call and not a closure call; for closure calls, we
                 // require the user to manually capture it with a `let` binding
             } else {
-                syn::visit_mut::visit_expr_mut(self, &mut i.func);
+                syn::visit::visit_expr(self, &i.func);
             }
         } else {
-            syn::visit_mut::visit_expr_mut(self, &mut i.func);
+            syn::visit::visit_expr(self, &i.func);
         }
 
-        for arg in &mut i.args {
-            self.visit_expr_mut(arg);
-        }
-    }
-
-    fn visit_expr_method_call_mut(&mut self, i: &mut syn::ExprMethodCall) {
-        syn::visit_mut::visit_expr_mut(self, &mut i.receiver);
-        for arg in &mut i.args {
-            self.visit_expr_mut(arg);
+        for arg in &i.args {
+            self.visit_expr(arg);
         }
     }
 
-    fn visit_type_mut(&mut self, _: &mut syn::Type) {}
-
-    fn visit_expr_struct_mut(&mut self, node: &mut syn::ExprStruct) {
-        for it in &mut node.attrs {
-            self.visit_attribute_mut(it);
+    fn visit_expr_method_call(&mut self, i: &syn::ExprMethodCall) {
+        syn::visit::visit_expr(self, &i.receiver);
+        for arg in &i.args {
+            self.visit_expr(arg);
         }
-        if let Some(it) = &mut node.qself {
-            self.visit_qself_mut(it);
+    }
+
+    fn visit_type(&mut self, _: &syn::Type) {}
+
+    fn visit_expr_struct(&mut self, node: &syn::ExprStruct) {
+        for it in &node.attrs {
+            self.visit_attribute(it);
+        }
+        if let Some(it) = &node.qself {
+            self.visit_qself(it);
         }
         // No need to capture the struct path
         // self.visit_path(&node.path);
-        for el in syn::punctuated::Punctuated::pairs_mut(&mut node.fields) {
+        for el in syn::punctuated::Punctuated::pairs(&node.fields) {
             let it = el.into_value();
-            self.visit_expr_mut(&mut it.expr);
+            self.visit_expr(&it.expr);
         }
-        if let Some(it) = &mut node.rest {
-            self.visit_expr_mut(it);
+        if let Some(it) = &node.rest {
+            self.visit_expr(it);
         }
     }
 
-    fn visit_expr_field_mut(&mut self, i: &mut syn::ExprField) {
-        self.visit_expr_mut(&mut i.base);
+    fn visit_expr_field(&mut self, i: &syn::ExprField) {
+        self.visit_expr(&i.base);
     }
 
-    fn visit_macro_mut(&mut self, i: &mut syn::Macro) {
+    fn visit_macro(&mut self, i: &syn::Macro) {
         // TODO(shadaj): emit a warning if our guess at parsing fails
         match i.delimiter {
             syn::MacroDelimiter::Paren(_binding_0) => {
-                i.tokens = i
-                    .parse_body_with(
-                        syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated,
-                    )
-                    .ok()
-                    .map(|mut exprs| {
-                        for arg in &mut exprs {
-                            self.visit_expr_mut(arg);
-                        }
-                        exprs.to_token_stream()
-                    })
-                    .unwrap_or(i.tokens.clone());
+                i.parse_body_with(
+                    syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated,
+                )
+                .ok()
+                .into_iter()
+                .for_each(|exprs| {
+                    for arg in &exprs {
+                        self.visit_expr(arg);
+                    }
+                });
             }
             syn::MacroDelimiter::Brace(_binding_0) => {
-                i.tokens = i
-                    .parse_body_with(syn::Block::parse_within)
+                i.parse_body_with(syn::Block::parse_within)
                     .ok()
-                    .map(|mut stmts| {
-                        for stmt in &mut stmts {
-                            self.visit_stmt_mut(stmt);
+                    .into_iter()
+                    .for_each(|stmts| {
+                        for stmt in &stmts {
+                            self.visit_stmt(stmt);
                         }
-                        syn::punctuated::Punctuated::<syn::Stmt, syn::Token![;]>::from_iter(stmts)
-                            .to_token_stream()
-                    })
-                    .unwrap_or(i.tokens.clone());
+                    });
             }
             syn::MacroDelimiter::Bracket(_binding_0) => {
-                i.tokens = i
-                    .parse_body_with(
-                        syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated,
-                    )
-                    .ok()
-                    .map(|mut exprs| {
-                        for arg in &mut exprs {
-                            self.visit_expr_mut(arg);
-                        }
-                        exprs.to_token_stream()
-                    })
-                    .unwrap_or(i.tokens.clone());
+                i.parse_body_with(
+                    syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated,
+                )
+                .ok()
+                .into_iter()
+                .for_each(|exprs| {
+                    for arg in &exprs {
+                        self.visit_expr(arg);
+                    }
+                });
             }
         }
     }
