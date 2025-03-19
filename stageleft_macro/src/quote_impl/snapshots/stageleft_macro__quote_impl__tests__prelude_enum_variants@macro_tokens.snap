@@ -4,19 +4,12 @@ expression: "prettyplease :: unparse(& wrapped)"
 ---
 fn main() {
     {
-        move |
-            __stageleft_ctx: &_,
-            set_mod: &mut String,
-            set_crate_name: &mut &'static str,
-            set_tokens: &mut &'static str,
-            _vec_to_set: &mut stageleft::internal::CaptureVec,
-            run: bool|
-        {
-            if !run {
-                *set_mod = module_path!().to_string();
-                *set_crate_name = option_env!("STAGELEFT_FINAL_CRATE_NAME")
+        move |__stageleft_ctx: &_, __output: &mut stageleft::internal::QuotedOutput| {
+            if true {
+                __output.module_path = module_path!();
+                __output.crate_name = option_env!("STAGELEFT_FINAL_CRATE_NAME")
                     .unwrap_or(env!("CARGO_PKG_NAME"));
-                *set_tokens = "Some (1)";
+                __output.tokens = "Some (1)";
                 unsafe {
                     return ::std::mem::MaybeUninit::uninit().assume_init();
                 }
