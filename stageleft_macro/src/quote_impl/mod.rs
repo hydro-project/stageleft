@@ -20,7 +20,10 @@ pub fn q_impl(root: TokenStream, toks: proc_macro2::TokenStream) -> TokenStream 
             #[allow(unused, non_upper_case_globals, non_snake_case)]
             let #i_without_span = {
                 let _out = ::#root::runtime_support::FreeVariableWithContext::uninitialized(&#i_without_span, __stageleft_ctx);
-                _vec_to_set.push((#ident_str.to_string(), ::#root::runtime_support::FreeVariableWithContext::to_tokens(#i_without_span, __stageleft_ctx)));
+                __output.captures.push(::#root::internal::Capture {
+                    ident: #ident_str,
+                    tokens: ::#root::runtime_support::FreeVariableWithContext::to_tokens(#i_without_span, __stageleft_ctx),
+                });
                 _out
             };
         )
@@ -43,13 +46,13 @@ pub fn q_impl(root: TokenStream, toks: proc_macro2::TokenStream) -> TokenStream 
     };
 
     quote!({
-        move |__stageleft_ctx: &_, set_mod: &mut String, set_crate_name: &mut &'static str, set_tokens: &mut &'static str, _vec_to_set: &mut #root::internal::CaptureVec, run: bool| {
+        move |__stageleft_ctx: &_, __output: &mut ::#root::internal::QuotedOutput| {
             #(#unitialized_free_variables;)*
 
-            if !run {
-                *set_mod = module_path!().to_string();
-                *set_crate_name = option_env!("STAGELEFT_FINAL_CRATE_NAME").unwrap_or(env!("CARGO_PKG_NAME"));
-                *set_tokens = #expr_without_spans;
+            if true {
+                __output.module_path = module_path!();
+                __output.crate_name = option_env!("STAGELEFT_FINAL_CRATE_NAME").unwrap_or(env!("CARGO_PKG_NAME"));
+                __output.tokens = #expr_without_spans;
 
                 #(#uninit_forgets;)*
                 unsafe {
