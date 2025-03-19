@@ -58,6 +58,7 @@ fn local_paths<'a>(_ctx: BorrowBounds<'a>) -> impl Quoted<'a, bool> {
 fn captured_closure<'a>(_ctx: BorrowBounds<'a>) -> impl Quoted<'a, bool> {
     let closure = q!(|| true);
     q!({
+        #[expect(clippy::redundant_locals, reason = "testing")]
         let closure = closure;
         closure()
     })
