@@ -52,13 +52,8 @@ fn my_top_level_function() -> bool {
 }
 
 #[stageleft::entry]
-fn crate_paths<'a>(_ctx: BorrowBounds<'a>) -> impl Quoted<'a, bool> {
+pub fn crate_paths<'a>(_ctx: BorrowBounds<'a>) -> impl Quoted<'a, bool> {
     q!(crate::my_top_level_function())
-}
-
-#[stageleft::entry]
-fn local_paths<'a>(_ctx: BorrowBounds<'a>) -> impl Quoted<'a, bool> {
-    q!(my_top_level_function())
 }
 
 #[stageleft::entry]
@@ -100,7 +95,17 @@ mod tests {
 
     #[test]
     fn test_local_paths() {
-        assert!(local_paths!());
+        assert!(submodule::self_path!());
+    }
+
+    #[test]
+    fn test_super_paths() {
+        assert!(submodule::subsubmodule::super_path!() == 42);
+    }
+
+    #[test]
+    fn test_self_super_paths() {
+        assert!(submodule::subsubmodule::self_super_path!() == 42);
     }
 
     #[test]
