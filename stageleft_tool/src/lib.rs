@@ -143,6 +143,16 @@ impl VisitMut for GenFinalPubVistor {
         // variant fields do not have visibility modifiers
     }
 
+    fn visit_item_static_mut(&mut self, i: &mut syn::ItemStatic) {
+        i.vis = parse_quote!(pub);
+        syn::visit_mut::visit_item_static_mut(self, i);
+    }
+
+    fn visit_item_const_mut(&mut self, i: &mut syn::ItemConst) {
+        i.vis = parse_quote!(pub);
+        syn::visit_mut::visit_item_const_mut(self, i);
+    }
+
     fn visit_item_struct_mut(&mut self, i: &mut syn::ItemStruct) {
         i.vis = parse_quote!(pub);
         syn::visit_mut::visit_item_struct_mut(self, i);
