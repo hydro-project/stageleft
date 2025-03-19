@@ -367,45 +367,8 @@ impl VisitMut for GenFinalPubVistor {
     }
 }
 
-pub fn gen_staged_trybuild(lib_path: &Path, orig_crate_name: String, test_mode: bool) -> syn::File {
-    let mut orig_flow_lib = syn_inline_mod::parse_and_inline_modules(lib_path);
-    InlineTopLevelMod {}.visit_file_mut(&mut orig_flow_lib);
-
-    let mut flow_lib_pub = syn_inline_mod::parse_and_inline_modules(lib_path);
-
-    let orig_crate_ident = syn::Ident::new(&orig_crate_name, Span::call_site());
-    let mut final_pub_visitor = GenFinalPubVistor {
-        current_mod: Some(parse_quote!(#orig_crate_ident)),
-        test_mode,
-    };
-    final_pub_visitor.visit_file_mut(&mut flow_lib_pub);
-
-    flow_lib_pub
-}
-
-pub fn gen_final_helper() {
-    let out_dir = env::var_os("OUT_DIR").unwrap();
-
-    let mut orig_flow_lib = syn_inline_mod::parse_and_inline_modules(Path::new("src/lib.rs"));
-    InlineTopLevelMod {}.visit_file_mut(&mut orig_flow_lib);
-
-    let mut flow_lib_pub = syn_inline_mod::parse_and_inline_modules(Path::new("src/lib.rs"));
-
-    let mut final_pub_visitor = GenFinalPubVistor {
-        current_mod: Some(parse_quote!(crate)),
-        test_mode: false,
-    };
-    final_pub_visitor.visit_file_mut(&mut flow_lib_pub);
-
-    fs::write(
-        Path::new(&out_dir).join("lib_pub.rs"),
-        prettyplease::unparse(&flow_lib_pub),
-    )
-    .unwrap();
-
+fn gen_deps_module(stageleft_name: syn::Ident, manifest_path: &Path) -> syn::ItemMod {
     // based on proc-macro-crate
-    let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
-    let manifest_path = Path::new(&manifest_dir).join("Cargo.toml");
     let toml_parsed = fs::read_to_string(&manifest_path)
         .unwrap()
         .parse::<DocumentMut>()
@@ -434,11 +397,6 @@ pub fn gen_final_helper() {
         })
         .collect::<Vec<syn::Item>>();
 
-    let stageleft_name = match proc_macro_crate::crate_name("stageleft").unwrap() {
-        proc_macro_crate::FoundCrate::Itself => syn::Ident::new("stageleft", Span::call_site()),
-        proc_macro_crate::FoundCrate::Name(name) => syn::Ident::new(&name, Span::call_site()),
-    };
-
     let deps_reexported_runtime = all_crate_names
         .iter()
         .map(|name| {
@@ -456,7 +414,7 @@ pub fn gen_final_helper() {
         })
         .collect::<Vec<syn::Stmt>>();
 
-    let deps_file: syn::File = syn::parse_quote! {
+    syn::parse_quote! {
         pub mod __deps {
             #(#deps_reexported)*
 
@@ -465,11 +423,68 @@ pub fn gen_final_helper() {
                 #(#deps_reexported_runtime)*
             }
         }
+    }
+}
+
+pub fn gen_staged_trybuild(
+    lib_path: &Path,
+    manifest_path: &Path,
+    orig_crate_name: String,
+    test_mode: bool,
+) -> syn::File {
+    let mut orig_flow_lib = syn_inline_mod::parse_and_inline_modules(lib_path);
+    InlineTopLevelMod {}.visit_file_mut(&mut orig_flow_lib);
+
+    let mut flow_lib_pub = syn_inline_mod::parse_and_inline_modules(lib_path);
+
+    let orig_crate_ident = syn::Ident::new(&orig_crate_name, Span::call_site());
+    let mut final_pub_visitor = GenFinalPubVistor {
+        current_mod: Some(parse_quote!(#orig_crate_ident)),
+        test_mode,
     };
+    final_pub_visitor.visit_file_mut(&mut flow_lib_pub);
+
+    let deps_mod = gen_deps_module(parse_quote!(stageleft), manifest_path);
+
+    parse_quote! {
+        #deps_mod
+        #flow_lib_pub
+    }
+}
+
+pub fn gen_final_helper() {
+    let out_dir = env::var_os("OUT_DIR").unwrap();
+
+    let mut orig_flow_lib = syn_inline_mod::parse_and_inline_modules(Path::new("src/lib.rs"));
+    InlineTopLevelMod {}.visit_file_mut(&mut orig_flow_lib);
+
+    let mut flow_lib_pub = syn_inline_mod::parse_and_inline_modules(Path::new("src/lib.rs"));
+
+    let mut final_pub_visitor = GenFinalPubVistor {
+        current_mod: Some(parse_quote!(crate)),
+        test_mode: false,
+    };
+    final_pub_visitor.visit_file_mut(&mut flow_lib_pub);
+
+    fs::write(
+        Path::new(&out_dir).join("lib_pub.rs"),
+        prettyplease::unparse(&flow_lib_pub),
+    )
+    .unwrap();
+
+    let stageleft_name = match proc_macro_crate::crate_name("stageleft").unwrap() {
+        proc_macro_crate::FoundCrate::Itself => syn::Ident::new("stageleft", Span::call_site()),
+        proc_macro_crate::FoundCrate::Name(name) => syn::Ident::new(&name, Span::call_site()),
+    };
+
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
+    let manifest_path = Path::new(&manifest_dir).join("Cargo.toml");
+
+    let deps_file = gen_deps_module(stageleft_name, &manifest_path);
 
     fs::write(
         Path::new(&out_dir).join("staged_deps.rs"),
-        prettyplease::unparse(&deps_file),
+        prettyplease::unparse(&parse_quote!(#deps_file)),
     )
     .unwrap();
 
