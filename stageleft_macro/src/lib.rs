@@ -26,9 +26,7 @@ pub fn q(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         }
     };
 
-    let expr = syn::parse_macro_input!(input as syn::Expr);
-
-    proc_macro::TokenStream::from(quote_impl::q_impl(root, expr))
+    proc_macro::TokenStream::from(quote_impl::q_impl(root, input.into()))
 }
 
 fn gen_use_paths(

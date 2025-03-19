@@ -1,34 +1,33 @@
 use proc_macro2::{Span, TokenStream};
-use quote::{ToTokens, quote};
-use syn::visit_mut::VisitMut;
+use quote::quote;
+use syn::visit::Visit;
 
 use self::free_variable::FreeVariableVisitor;
 
 mod free_variable;
 
-pub fn q_impl(root: TokenStream, mut expr: syn::Expr) -> TokenStream {
+pub fn q_impl(root: TokenStream, toks: proc_macro2::TokenStream) -> TokenStream {
     let mut visitor = FreeVariableVisitor::default();
-    visitor.visit_expr_mut(&mut expr);
+    if let Ok(expr) = syn::parse2::<syn::Expr>(toks.clone()) {
+        visitor.visit_expr(&expr);
+    }
 
     let unitialized_free_variables = visitor.free_variables.iter().map(|i| {
-        let ident_str = format!("{}__free", i);
-
-        let i_renamed = syn::Ident::new(&ident_str, i.span());
-        let mut i_outer = i.clone();
-        i_outer.set_span(Span::call_site());
+        let ident_str = i.to_string();
+        let i_without_span = syn::Ident::new(&ident_str, Span::call_site());
 
         quote!(
             #[allow(unused, non_upper_case_globals, non_snake_case)]
-            let #i_renamed = {
-                let _out = ::#root::runtime_support::FreeVariableWithContext::uninitialized(&#i_outer, __stageleft_ctx);
-                _vec_to_set.push((#ident_str.to_string(), ::#root::runtime_support::FreeVariableWithContext::to_tokens(#i_outer, __stageleft_ctx)));
+            let #i_without_span = {
+                let _out = ::#root::runtime_support::FreeVariableWithContext::uninitialized(&#i_without_span, __stageleft_ctx);
+                _vec_to_set.push((#ident_str.to_string(), ::#root::runtime_support::FreeVariableWithContext::to_tokens(#i_without_span, __stageleft_ctx)));
                 _out
             };
         )
     });
 
     let uninit_forgets = visitor.free_variables.iter().map(|i| {
-        let i_without_span = syn::Ident::new(&format!("{}__free", i), Span::call_site());
+        let i_without_span = syn::Ident::new(&i.to_string(), Span::call_site());
         quote!(
             #[allow(unused, non_upper_case_globals, non_snake_case)]
             ::std::mem::forget(#i_without_span);
@@ -36,20 +35,22 @@ pub fn q_impl(root: TokenStream, mut expr: syn::Expr) -> TokenStream {
     });
 
     // necessary to ensure proper hover in Rust Analyzer
-    let expr_without_spans: syn::Expr =
-        syn::parse_str(&expr.clone().into_token_stream().to_string()).unwrap();
+    let expr_without_spans = if std::env::var("RUST_ANALYZER_INTERNALS_DO_NOT_USE").is_ok() {
+        // for unknown reasons, Rust Analyzer completions break if we emit the input as a string as well :(
+        "".to_string()
+    } else {
+        toks.to_string()
+    };
 
     quote!({
-        move |__stageleft_ctx: &_, set_mod: &mut String, set_crate_name: &mut &'static str, set_tokens: &mut #root::internal::TokenStream, _vec_to_set: &mut #root::internal::CaptureVec, run: bool| {
+        move |__stageleft_ctx: &_, set_mod: &mut String, set_crate_name: &mut &'static str, set_tokens: &mut &'static str, _vec_to_set: &mut #root::internal::CaptureVec, run: bool| {
             #(#unitialized_free_variables;)*
 
-            *set_mod = module_path!().to_string();
-            *set_crate_name = option_env!("STAGELEFT_FINAL_CRATE_NAME").unwrap_or(env!("CARGO_PKG_NAME"));
-            *set_tokens = #root::internal::quote! {
-                #expr_without_spans
-            };
-
             if !run {
+                *set_mod = module_path!().to_string();
+                *set_crate_name = option_env!("STAGELEFT_FINAL_CRATE_NAME").unwrap_or(env!("CARGO_PKG_NAME"));
+                *set_tokens = #expr_without_spans;
+
                 #(#uninit_forgets;)*
                 unsafe {
                     return ::std::mem::MaybeUninit::uninit().assume_init();
@@ -58,7 +59,7 @@ pub fn q_impl(root: TokenStream, mut expr: syn::Expr) -> TokenStream {
 
             #[allow(unreachable_code, unused_qualifications)]
             {
-                #expr
+                #toks
             }
         }
     })
