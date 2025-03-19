@@ -6,7 +6,7 @@ fn main() {
     {
         move |__stageleft_ctx: &_, __output: &mut ::stageleft::internal::QuotedOutput| {
             #[allow(unused, non_upper_case_globals, non_snake_case)]
-            let x = {
+            let x__free = {
                 let _out = ::stageleft::runtime_support::FreeVariableWithContext::uninitialized(
                     &x,
                     __stageleft_ctx,
@@ -14,7 +14,7 @@ fn main() {
                 __output
                     .captures
                     .push(::stageleft::internal::Capture {
-                        ident: "x",
+                        ident: "x__free",
                         tokens: ::stageleft::runtime_support::FreeVariableWithContext::to_tokens(
                             x,
                             __stageleft_ctx,
@@ -26,14 +26,14 @@ fn main() {
                 __output.module_path = module_path!();
                 __output.crate_name = option_env!("STAGELEFT_FINAL_CRATE_NAME")
                     .unwrap_or(env!("CARGO_PKG_NAME"));
-                __output.tokens = "x += 2";
+                __output.tokens = "x__free += 2";
                 #[allow(unused, non_upper_case_globals, non_snake_case)]
-                ::std::mem::forget(x);
+                ::std::mem::forget(x__free);
                 unsafe {
                     return ::std::mem::MaybeUninit::uninit().assume_init();
                 }
             }
-            #[allow(unreachable_code, unused_qualifications)] { x += 2 }
+            #[allow(unreachable_code, unused_qualifications)] { x__free += 2 }
         }
     }
 }

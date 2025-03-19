@@ -6,6 +6,13 @@ use stageleft::{BorrowBounds, IntoQuotedOnce, Quoted, RuntimeData, q};
 pub(crate) mod features;
 pub(crate) mod submodule;
 
+static GLOBAL_VAR: i32 = 42;
+
+#[stageleft::entry]
+pub fn using_global_var(_ctx: BorrowBounds<'_>) -> impl Quoted<i32> {
+    q!(GLOBAL_VAR)
+}
+
 #[stageleft::entry]
 pub fn using_rand(_ctx: BorrowBounds<'_>) -> impl Quoted<i32> {
     q!(rand::random::<i32>())
