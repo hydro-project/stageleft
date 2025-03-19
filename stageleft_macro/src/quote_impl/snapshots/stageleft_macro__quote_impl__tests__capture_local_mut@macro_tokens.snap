@@ -4,21 +4,15 @@ expression: "prettyplease :: unparse(& wrapped)"
 ---
 fn main() {
     {
-        move |
-            __stageleft_ctx: &_,
-            set_mod: &mut String,
-            set_crate_name: &mut &'static str,
-            set_tokens: &mut &'static str,
-            _vec_to_set: &mut stageleft::internal::CaptureVec,
-            run: bool|
-        {
+        move |__stageleft_ctx: &_, __output: &mut stageleft::internal::QuotedOutput| {
             #[allow(unused, non_upper_case_globals, non_snake_case)]
             let x = {
                 let _out = ::stageleft::runtime_support::FreeVariableWithContext::uninitialized(
                     &x,
                     __stageleft_ctx,
                 );
-                _vec_to_set
+                __output
+                    .captures
                     .push((
                         "x".to_string(),
                         ::stageleft::runtime_support::FreeVariableWithContext::to_tokens(
@@ -28,11 +22,11 @@ fn main() {
                     ));
                 _out
             };
-            if !run {
-                *set_mod = module_path!().to_string();
-                *set_crate_name = option_env!("STAGELEFT_FINAL_CRATE_NAME")
+            if true {
+                __output.module_path = module_path!().to_string();
+                __output.crate_name = option_env!("STAGELEFT_FINAL_CRATE_NAME")
                     .unwrap_or(env!("CARGO_PKG_NAME"));
-                *set_tokens = "x += 2";
+                __output.tokens = "x += 2";
                 #[allow(unused, non_upper_case_globals, non_snake_case)]
                 ::std::mem::forget(x);
                 unsafe {
