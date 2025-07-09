@@ -43,7 +43,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.4
+        uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Set Rust caching env vars
         uses: actions/github-script@v6
@@ -87,7 +87,7 @@ jobs:
           toolchain: stable
 
       - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.4
+        uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Set Rust caching env vars
         uses: actions/github-script@v6
