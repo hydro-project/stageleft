@@ -8,6 +8,8 @@ edition = "2024"
 release = false
 
 [features]
+default = ["stageleft_macro_entrypoint"]
+stageleft_macro_entrypoint = []
 test_feature = []
 
 [dependencies]

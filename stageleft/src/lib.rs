@@ -16,6 +16,7 @@ pub mod internal {
     pub use proc_macro2::{Span, TokenStream};
     pub use quote::quote;
 
+    pub use crate::type_name::add_crate_with_staged;
     pub use {proc_macro_crate, proc_macro2, syn};
 
     pub struct Capture {
@@ -86,14 +87,13 @@ macro_rules! stageleft_no_entry_crate {
             reason = "generated code"
         )]
         pub mod __staged {
-            #[cfg(not(feature = "stageleft_devel"))]
+            #[cfg(any(feature = "stageleft_macro_entrypoint", stageleft_trybuild))]
             include!(concat!(
                 env!("OUT_DIR"),
                 $crate::PATH_SEPARATOR!(),
                 "lib_pub.rs"
             ));
 
-            #[cfg(not(feature = "stageleft_devel"))]
             include!(concat!(
                 env!("OUT_DIR"),
                 $crate::PATH_SEPARATOR!(),

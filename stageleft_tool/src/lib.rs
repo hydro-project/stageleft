@@ -92,7 +92,7 @@ pub fn gen_macro(staged_path: &Path, crate_name: &str) {
     println!("cargo::rustc-check-cfg=cfg(stageleft_macro)");
     println!("cargo::rustc-check-cfg=cfg(stageleft_runtime)");
     println!("cargo::rerun-if-changed=build.rs");
-    println!("cargo::rustc-env=STAGELEFT_FINAL_CRATE_NAME={}", crate_name);
+    println!("cargo::rustc-env=STAGELEFT_FINAL_CRATE_NAME={crate_name}");
     println!("cargo::rustc-cfg=stageleft_macro");
 
     println!(
@@ -431,6 +431,7 @@ fn gen_deps_module(stageleft_name: syn::Ident, manifest_path: &Path) -> syn::Ite
             #[#stageleft_name::internal::ctor::ctor(crate_path = #stageleft_name::internal::ctor)]
             fn __init() {
                 #(#deps_reexported_runtime)*
+                #stageleft_name::internal::add_crate_with_staged(env!("CARGO_PKG_NAME"));
             }
         }
     }
@@ -462,7 +463,7 @@ pub fn gen_staged_trybuild(
     }
 }
 
-pub fn gen_final_helper() {
+pub fn gen_staged_pub() {
     let out_dir = env::var_os("OUT_DIR").unwrap();
 
     let mut orig_flow_lib = syn_inline_mod::parse_and_inline_modules(Path::new("src/lib.rs"));
@@ -481,6 +482,11 @@ pub fn gen_final_helper() {
         prettyplease::unparse(&flow_lib_pub),
     )
     .unwrap();
+    println!("cargo::rerun-if-changed=src");
+}
+
+pub fn gen_staged_deps() {
+    let out_dir = env::var_os("OUT_DIR").unwrap();
 
     let stageleft_name = match proc_macro_crate::crate_name("stageleft").unwrap() {
         proc_macro_crate::FoundCrate::Itself => syn::Ident::new("stageleft", Span::call_site()),
@@ -498,9 +504,7 @@ pub fn gen_final_helper() {
     )
     .unwrap();
 
-    println!("cargo::rerun-if-changed=build.rs");
     println!("cargo::rerun-if-changed=Cargo.toml");
-    println!("cargo::rerun-if-changed=src");
 }
 
 #[macro_export]
@@ -508,15 +512,21 @@ macro_rules! gen_final {
     () => {
         println!("cargo::rustc-check-cfg=cfg(stageleft_macro)");
         println!("cargo::rustc-check-cfg=cfg(stageleft_runtime)");
+        println!("cargo::rustc-check-cfg=cfg(stageleft_trybuild)");
+        println!("cargo::rustc-check-cfg=cfg(feature, values(\"stageleft_macro_entrypoint\"))");
         println!("cargo::rustc-cfg=stageleft_runtime");
+
+        println!("cargo::rerun-if-changed=build.rs");
 
         #[allow(
             unexpected_cfgs,
-            reason = "Consumer crates may optionally add the `stageleft_devel` feature."
+            reason = "Macro entrypoints must define the stageleft_macro_entrypoint feature"
         )]
         {
-            #[cfg(not(feature = "stageleft_devel"))]
-            $crate::gen_final_helper()
+            #[cfg(any(feature = "stageleft_macro_entrypoint", stageleft_trybuild))]
+            $crate::gen_staged_pub()
         }
+
+        $crate::gen_staged_deps()
     };
 }
