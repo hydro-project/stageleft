@@ -131,7 +131,7 @@ impl syn::visit_mut::VisitMut for FreeVariableVisitor {
     fn visit_ident_mut(&mut self, i: &mut proc_macro2::Ident) {
         if !self.current_scope.contains_term(i) {
             self.free_variables.insert(i.clone());
-            *i = syn::Ident::new(&format!("{}__free", i), i.span());
+            *i = syn::Ident::new(&format!("{i}__free"), i.span());
         }
     }
 

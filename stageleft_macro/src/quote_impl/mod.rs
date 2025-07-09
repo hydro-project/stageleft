@@ -18,7 +18,7 @@ pub fn q_impl(root: TokenStream, toks: proc_macro2::TokenStream) -> TokenStream 
     let unitialized_free_variables = visitor.free_variables.iter().map(|i| {
         let i_without_span = syn::Ident::new(&i.to_string(), Span::call_site());
 
-        let ident_shadow_str = format!("{}__free", i);
+        let ident_shadow_str = format!("{i}__free");
         let i_shadow_ident = syn::Ident::new(&ident_shadow_str, Span::call_site());
 
         quote!(
@@ -35,7 +35,7 @@ pub fn q_impl(root: TokenStream, toks: proc_macro2::TokenStream) -> TokenStream 
     });
 
     let uninit_forgets = visitor.free_variables.iter().map(|i| {
-        let i_shadow_ident = syn::Ident::new(&format!("{}__free", i), Span::call_site());
+        let i_shadow_ident = syn::Ident::new(&format!("{i}__free"), Span::call_site());
 
         quote!(
             #[allow(unused, non_upper_case_globals, non_snake_case)]
