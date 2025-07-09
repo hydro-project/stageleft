@@ -27,6 +27,9 @@ static PRIVATE_REEXPORTS: ReexportsSet = LazyLock::new(|| {
     ])
 });
 
+static CRATES_WITH_STAGED: LazyLock<RwLock<Vec<&'static str>>> =
+    LazyLock::new(|| RwLock::new(vec![]));
+
 /// Adds a private module re-export transformation to the type quoting system.
 ///
 /// Sometimes, the [`quote_type`] function may produce an uncompilable reference to a
@@ -49,6 +52,13 @@ static PRIVATE_REEXPORTS: ReexportsSet = LazyLock::new(|| {
 pub fn add_private_reexport(from: Vec<&'static str>, to: Vec<&'static str>) {
     let mut transformations = PRIVATE_REEXPORTS.write().unwrap();
     transformations.push((from, to));
+}
+
+/// Internal API that marks a crate which has an `__staged` companion module to resolve
+/// symbols in quoted code.
+pub fn add_crate_with_staged(name: &'static str) {
+    let mut crates = CRATES_WITH_STAGED.write().unwrap();
+    crates.push(name);
 }
 
 struct RewritePrivateReexports {
@@ -97,6 +107,24 @@ impl VisitMut for RewritePrivateReexports {
     }
 }
 
+struct RewriteCrateWithStaged;
+
+impl VisitMut for RewriteCrateWithStaged {
+    fn visit_path_mut(&mut self, i: &mut syn::Path) {
+        let crates = CRATES_WITH_STAGED.read().unwrap();
+
+        if let Some(first_segment) = i.segments.first_mut() {
+            if crates.contains(&first_segment.ident.to_string().as_str())
+                && i.segments.get(1).is_none_or(|s| s.ident != "__staged")
+            {
+                i.segments.insert(1, parse_quote!(__staged));
+            }
+        }
+
+        syn::visit_mut::visit_path_mut(self, i);
+    }
+}
+
 struct ElimClosureToInfer;
 
 impl VisitMut for ElimClosureToInfer {
@@ -130,11 +158,12 @@ impl VisitMut for ElimClosureToInfer {
 pub fn quote_type<T>() -> syn::Type {
     let name = std::any::type_name::<T>().replace("{{closure}}", "CLOSURE_TO_INFER");
     let mut t_type: syn::Type = syn::parse_str(&name).unwrap_or_else(|_| {
-        panic!("Could not parse type name: {}", name);
+        panic!("Could not parse type name: {name}");
     });
     let mapping = super::runtime_support::MACRO_TO_CRATE.with(|m| m.borrow().clone());
     ElimClosureToInfer.visit_type_mut(&mut t_type);
     RewritePrivateReexports { mapping }.visit_type_mut(&mut t_type);
+    RewriteCrateWithStaged.visit_type_mut(&mut t_type);
 
     t_type
 }
