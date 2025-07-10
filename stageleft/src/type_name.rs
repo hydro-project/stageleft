@@ -6,28 +6,53 @@ use syn::{TypeInfer, parse_quote};
 
 use crate::runtime_support::get_final_crate_name;
 
-type ReexportsSet = LazyLock<RwLock<Vec<(Vec<&'static str>, Vec<&'static str>)>>>;
+type ReexportsSet = LazyLock<RwLock<Vec<(Vec<String>, Vec<String>)>>>;
 static PRIVATE_REEXPORTS: ReexportsSet = LazyLock::new(|| {
     RwLock::new(vec![
-        (vec!["alloc"], vec!["std"]),
-        (vec!["core", "ops", "range"], vec!["std", "ops"]),
-        (vec!["core", "slice", "iter"], vec!["std", "slice"]),
-        (vec!["core", "iter", "adapters", "*"], vec!["std", "iter"]),
+        (vec!["alloc".into()], vec!["std".into()]),
         (
-            vec!["std", "collections", "hash", "map"],
-            vec!["std", "collections", "hash_map"],
+            vec!["core".into(), "ops".into(), "range".into()],
+            vec!["std".into(), "ops".into()],
         ),
         (
-            vec!["std", "collections", "hash", "set"],
-            vec!["std", "collections", "hash_set"],
+            vec!["core".into(), "slice".into(), "iter".into()],
+            vec!["std".into(), "slice".into()],
         ),
-        (vec!["std", "vec", "into_iter"], vec!["std", "vec"]),
-        (vec!["tokio", "time", "instant"], vec!["tokio", "time"]),
-        (vec!["bytes", "bytes"], vec!["bytes"]),
+        (
+            vec!["core".into(), "iter".into(), "adapters".into(), "*".into()],
+            vec!["std".into(), "iter".into()],
+        ),
+        (
+            vec![
+                "std".into(),
+                "collections".into(),
+                "hash".into(),
+                "map".into(),
+            ],
+            vec!["std".into(), "collections".into(), "hash_map".into()],
+        ),
+        (
+            vec![
+                "std".into(),
+                "collections".into(),
+                "hash".into(),
+                "set".into(),
+            ],
+            vec!["std".into(), "collections".into(), "hash_set".into()],
+        ),
+        (
+            vec!["std".into(), "vec".into(), "into_iter".into()],
+            vec!["std".into(), "vec".into()],
+        ),
+        (
+            vec!["tokio".into(), "time".into(), "instant".into()],
+            vec!["tokio".into(), "time".into()],
+        ),
+        (vec!["bytes".into(), "bytes".into()], vec!["bytes".into()]),
     ])
 });
 
-static CRATES_WITH_STAGED: RwLock<Vec<&'static str>> = RwLock::new(Vec::new());
+static CRATES_WITH_STAGED: RwLock<Vec<String>> = RwLock::new(Vec::new());
 
 /// Adds a private module re-export transformation to the type quoting system.
 ///
@@ -48,17 +73,20 @@ static CRATES_WITH_STAGED: RwLock<Vec<&'static str>> = RwLock::new(Vec::new());
 ///     vec!["std", "collections", "hash_map"],
 /// );
 /// ```
-pub fn add_private_reexport(from: Vec<&'static str>, to: Vec<&'static str>) {
+pub fn add_private_reexport(from: Vec<impl Into<String>>, to: Vec<impl Into<String>>) {
     let mut transformations = PRIVATE_REEXPORTS.write().unwrap();
-    transformations.push((from, to));
+    transformations.push((
+        from.into_iter().map(Into::into).collect(),
+        to.into_iter().map(Into::into).collect(),
+    ));
 }
 
 #[doc(hidden)]
 /// Internal API that marks a crate which has an `__staged` companion module to resolve
 /// symbols in quoted code.
-pub fn add_crate_with_staged(name: &'static str) {
+pub fn add_crate_with_staged(name: impl Into<String>) {
     let mut crates = CRATES_WITH_STAGED.write().unwrap();
-    crates.push(name);
+    crates.push(name.into());
 }
 
 struct RewritePrivateReexports {
@@ -114,7 +142,7 @@ impl VisitMut for RewriteCrateWithStaged {
         if let Some(first_segment) = i.segments.first_mut() {
             let crates = CRATES_WITH_STAGED.read().unwrap();
 
-            if crates.contains(&first_segment.ident.to_string().as_str())
+            if crates.contains(&first_segment.ident.to_string())
                 && i.segments.get(1).is_none_or(|s| s.ident != "__staged")
             {
                 i.segments.insert(1, parse_quote!(__staged));

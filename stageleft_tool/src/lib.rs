@@ -414,10 +414,11 @@ fn gen_deps_module(stageleft_name: syn::Ident, manifest_path: &Path) -> syn::Ite
                 #stageleft_name::add_private_reexport(
                     vec![#name],
                     vec![
-                        option_env!("STAGELEFT_FINAL_CRATE_NAME").unwrap_or(env!("CARGO_PKG_NAME")),
-                        "__staged",
-                        "__deps",
-                        #name
+                        option_env!("STAGELEFT_FINAL_CRATE_NAME").unwrap_or(env!("CARGO_PKG_NAME"))
+                            .replace("-", "_"),
+                        "__staged".to_string(),
+                        "__deps".to_string(),
+                        #name.to_string()
                     ]
                 );
             }
@@ -431,7 +432,7 @@ fn gen_deps_module(stageleft_name: syn::Ident, manifest_path: &Path) -> syn::Ite
             #[#stageleft_name::internal::ctor::ctor(crate_path = #stageleft_name::internal::ctor)]
             fn __init() {
                 #(#deps_reexported_runtime)*
-                #stageleft_name::internal::add_crate_with_staged(env!("CARGO_PKG_NAME"));
+                #stageleft_name::internal::add_crate_with_staged(env!("CARGO_PKG_NAME").replace("-", "_"));
             }
         }
     }
