@@ -2,7 +2,6 @@ use std::collections::{BTreeSet, HashSet};
 
 mod prelude;
 use prelude::is_prelude;
-use quote::ToTokens;
 
 #[derive(Debug)]
 pub struct ScopeStack {
@@ -206,49 +205,6 @@ impl syn::visit_mut::VisitMut for FreeVariableVisitor {
     }
 
     fn visit_macro_mut(&mut self, i: &mut syn::Macro) {
-        // TODO(shadaj): emit a warning if our guess at parsing fails
-        match i.delimiter {
-            syn::MacroDelimiter::Paren(_binding_0) => {
-                i.tokens = i
-                    .parse_body_with(
-                        syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated,
-                    )
-                    .ok()
-                    .map(|mut exprs| {
-                        for arg in &mut exprs {
-                            self.visit_expr_mut(arg);
-                        }
-                        exprs.to_token_stream()
-                    })
-                    .unwrap_or(i.tokens.clone());
-            }
-            syn::MacroDelimiter::Brace(_binding_0) => {
-                i.tokens = i
-                    .parse_body_with(syn::Block::parse_within)
-                    .ok()
-                    .map(|mut stmts| {
-                        for stmt in &mut stmts {
-                            self.visit_stmt_mut(stmt);
-                        }
-                        syn::punctuated::Punctuated::<syn::Stmt, syn::Token![;]>::from_iter(stmts)
-                            .to_token_stream()
-                    })
-                    .unwrap_or(i.tokens.clone());
-            }
-            syn::MacroDelimiter::Bracket(_binding_0) => {
-                i.tokens = i
-                    .parse_body_with(
-                        syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated,
-                    )
-                    .ok()
-                    .map(|mut exprs| {
-                        for arg in &mut exprs {
-                            self.visit_expr_mut(arg);
-                        }
-                        exprs.to_token_stream()
-                    })
-                    .unwrap_or(i.tokens.clone());
-            }
-        }
+        super::attempt_transform_macro::attempt_transform_macro(self, i);
     }
 }
