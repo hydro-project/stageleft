@@ -1,5 +1,7 @@
 use syn::{Path, visit_mut::VisitMut};
 
+use crate::attempt_transform_macro::attempt_transform_macro;
+
 pub struct RewritePaths {
     pub(super) crate_root_path: Path,
     pub(super) module_path: Option<Path>,
@@ -42,5 +44,9 @@ impl VisitMut for RewritePaths {
                     .collect();
             }
         }
+    }
+
+    fn visit_macro_mut(&mut self, i: &mut syn::Macro) {
+        attempt_transform_macro(self, i);
     }
 }

@@ -32,6 +32,7 @@ pub mod internal {
     }
 }
 
+pub(crate) mod attempt_transform_macro;
 mod rewrite_paths;
 pub mod runtime_support;
 mod type_name;

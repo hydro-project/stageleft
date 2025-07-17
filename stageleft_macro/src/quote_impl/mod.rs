@@ -4,6 +4,7 @@ use syn::visit_mut::VisitMut;
 
 use self::free_variable::FreeVariableVisitor;
 
+mod attempt_transform_macro;
 mod free_variable;
 
 pub fn q_impl(root: TokenStream, toks: proc_macro2::TokenStream) -> TokenStream {
