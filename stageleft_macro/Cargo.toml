@@ -16,7 +16,7 @@ path = "src/lib.rs"
 quote = "1"
 syn = { version = "2", features = [ "full", "visit-mut", "extra-traits" ] }
 proc-macro2 = "1"
-proc-macro-crate = "1"
+proc-macro-crate = "3.3"
 sha2 = "0.10.0"
 
 [dev-dependencies]
