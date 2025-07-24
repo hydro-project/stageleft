@@ -518,6 +518,7 @@ macro_rules! gen_final {
         println!("cargo::rustc-cfg=stageleft_runtime");
 
         println!("cargo::rerun-if-changed=build.rs");
+        println!("cargo::rerun-if-env-changed=STAGELEFT_TRYBUILD_BUILD_STAGED");
 
         #[allow(
             unexpected_cfgs,
