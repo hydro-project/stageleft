@@ -524,8 +524,12 @@ macro_rules! gen_final {
             reason = "Macro entrypoints must define the stageleft_macro_entrypoint feature"
         )]
         {
-            #[cfg(any(feature = "stageleft_macro_entrypoint", stageleft_trybuild))]
-            $crate::gen_staged_pub()
+            if cfg!(feature = "stageleft_macro_entrypoint") {
+                $crate::gen_staged_pub()
+            } else if std::env::var("STAGELEFT_TRYBUILD_BUILD_STAGED").is_ok() {
+                println!("cargo::rustc-cfg=stageleft_trybuild");
+                $crate::gen_staged_pub()
+            }
         }
 
         $crate::gen_staged_deps()
