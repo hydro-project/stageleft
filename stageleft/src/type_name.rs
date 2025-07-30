@@ -45,12 +45,19 @@ static PRIVATE_REEXPORTS: ReexportsSet = LazyLock::new(|| {
             vec!["std".into(), "vec".into()],
         ),
         (
+            vec!["std".into(), "io".into(), "error".into()],
+            vec!["std".into(), "io".into()],
+        ),
+        (
             vec!["tokio".into(), "time".into(), "instant".into()],
             vec!["tokio".into(), "time".into()],
         ),
         (vec!["bytes".into(), "bytes".into()], vec!["bytes".into()]),
+        (vec!["bytes".into(), "bytes_mut".into()], vec!["bytes".into()]),
     ])
 });
+
+static DEPS_REEXPORTS: ReexportsSet = LazyLock::new(|| RwLock::new(vec![]));
 
 static CRATES_WITH_STAGED: RwLock<Vec<String>> = RwLock::new(Vec::new());
 
@@ -81,6 +88,14 @@ pub fn add_private_reexport(from: Vec<impl Into<String>>, to: Vec<impl Into<Stri
     ));
 }
 
+pub fn add_deps_reexport(from: Vec<impl Into<String>>, to: Vec<impl Into<String>>) {
+    let mut transformations = DEPS_REEXPORTS.write().unwrap();
+    transformations.push((
+        from.into_iter().map(Into::into).collect(),
+        to.into_iter().map(Into::into).collect(),
+    ));
+}
+
 #[doc(hidden)]
 /// Internal API that marks a crate which has an `__staged` companion module to resolve
 /// symbols in quoted code.
@@ -96,7 +111,8 @@ struct RewritePrivateReexports {
 impl VisitMut for RewritePrivateReexports {
     fn visit_path_mut(&mut self, i: &mut syn::Path) {
         let transformations = PRIVATE_REEXPORTS.read().unwrap();
-        for (from, to) in transformations.iter() {
+        let deps_transformations = DEPS_REEXPORTS.read().unwrap();
+        for (from, to) in transformations.iter() .chain(deps_transformations.iter()) {
             #[expect(clippy::cmp_owned, reason = "buggy lint for syn::Ident::to_string")]
             if i.segments.len() >= from.len()
                 && from

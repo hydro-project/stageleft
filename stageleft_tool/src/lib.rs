@@ -411,7 +411,7 @@ fn gen_deps_module(stageleft_name: syn::Ident, manifest_path: &Path) -> syn::Ite
         .iter()
         .map(|name| {
             parse_quote! {
-                #stageleft_name::add_private_reexport(
+                #stageleft_name::internal::add_deps_reexport(
                     vec![#name],
                     vec![
                         option_env!("STAGELEFT_FINAL_CRATE_NAME").unwrap_or(env!("CARGO_PKG_NAME"))
