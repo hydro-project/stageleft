@@ -16,7 +16,7 @@ pub mod internal {
     pub use proc_macro2::{Span, TokenStream};
     pub use quote::quote;
 
-    pub use crate::type_name::add_crate_with_staged;
+    pub use crate::type_name::{add_crate_with_staged, add_deps_reexport};
     pub use {proc_macro_crate, proc_macro2, syn};
 
     pub struct Capture {
