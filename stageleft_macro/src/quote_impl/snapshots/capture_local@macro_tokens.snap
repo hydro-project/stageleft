@@ -1,6 +1,5 @@
 ---
 source: stageleft_macro/src/quote_impl/mod.rs
-assertion_line: 121
 expression: "prettyplease :: unparse(& wrapped)"
 ---
 fn main() {
@@ -27,15 +26,14 @@ fn main() {
                 __output.module_path = module_path!();
                 __output.crate_name = option_env!("STAGELEFT_FINAL_CRATE_NAME")
                     .unwrap_or(env!("CARGO_PKG_NAME"));
-                __output.tokens = "(x__free + 2) + (x__free + 2)";
+                __output.tokens = "x__free + 2";
                 #[allow(unused, non_upper_case_globals, non_snake_case)]
                 ::std::mem::forget(x__free);
                 unsafe {
                     return ::std::mem::MaybeUninit::uninit().assume_init();
                 }
             }
-            #[allow(unreachable_code, unused_qualifications)]
-            { (x__free + 2) + (x__free + 2) }
+            #[allow(unreachable_code, unused_qualifications)] { x__free + 2 }
         }
     }
 }

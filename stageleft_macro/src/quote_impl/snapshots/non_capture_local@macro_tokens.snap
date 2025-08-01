@@ -1,6 +1,5 @@
 ---
 source: stageleft_macro/src/quote_impl/mod.rs
-assertion_line: 168
 expression: "prettyplease :: unparse(& wrapped)"
 ---
 fn main() {
@@ -10,12 +9,18 @@ fn main() {
                 __output.module_path = module_path!();
                 __output.crate_name = option_env!("STAGELEFT_FINAL_CRATE_NAME")
                     .unwrap_or(env!("CARGO_PKG_NAME"));
-                __output.tokens = "Foo { x : 1 }";
+                __output.tokens = "{ let x = 1 ; x + 2 }";
                 unsafe {
                     return ::std::mem::MaybeUninit::uninit().assume_init();
                 }
             }
-            #[allow(unreachable_code, unused_qualifications)] { Foo { x: 1 } }
+            #[allow(unreachable_code, unused_qualifications)]
+            {
+                {
+                    let x = 1;
+                    x + 2
+                }
+            }
         }
     }
 }
