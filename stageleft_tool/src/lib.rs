@@ -388,12 +388,10 @@ fn gen_deps_module(stageleft_name: syn::Ident, manifest_path: &Path) -> syn::Ite
         .unwrap()
         .iter()
         .filter(|(_, v)| !v.get("optional").and_then(|o| o.as_bool()).unwrap_or(false))
-        .map(|(name, v)| {
-            v.get("package")
-                .and_then(|p| p.as_str())
-                .unwrap_or(name)
-                .to_string()
-                .replace('-', "_")
+        .map(|(name, _v)| {
+            // We want the LHS renamed name, not the actual package name inside `_v.get("package")`.
+            // `foo_alias = { package = "foo", ... }` -> we want `use foo_alias;`.
+            name.replace('-', "_")
         })
         .collect::<Vec<_>>();
 
@@ -495,7 +493,7 @@ pub fn gen_staged_deps() {
         panic!("Expected stageleft {main_pkg_name} package to be present in `Cargo.toml`")
     });
     let stageleft_name = match stageleft_crate {
-        proc_macro_crate::FoundCrate::Itself => syn::Ident::new("stageleft", Span::call_site()),
+        proc_macro_crate::FoundCrate::Itself => syn::Ident::new(main_pkg_name, Span::call_site()),
         proc_macro_crate::FoundCrate::Name(name) => syn::Ident::new(&name, Span::call_site()),
     };
 
