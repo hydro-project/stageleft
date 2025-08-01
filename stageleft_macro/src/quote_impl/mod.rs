@@ -91,7 +91,10 @@ mod tests {
                 }
             };
 
-            insta::with_settings!({snapshot_suffix => "macro_tokens"}, {
+            insta::with_settings!({
+                snapshot_suffix => "macro_tokens",
+                prepend_module_to_snapshot => false,
+            }, {
                 insta::assert_snapshot!(
                     prettyplease::unparse(&wrapped)
                 );
