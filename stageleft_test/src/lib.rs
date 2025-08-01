@@ -15,7 +15,7 @@ pub fn using_global_var(_ctx: BorrowBounds<'_>) -> impl Quoted<i32> {
 
 #[stageleft::entry]
 pub fn using_rand(_ctx: BorrowBounds<'_>) -> impl Quoted<i32> {
-    q!(rand::random::<i32>())
+    q!(rand_alias::random::<i32>())
 }
 
 #[stageleft::entry]
