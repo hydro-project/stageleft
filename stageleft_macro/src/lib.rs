@@ -7,6 +7,21 @@ use syn::{AngleBracketedGenericArguments, Token, Type};
 
 mod quote_impl;
 
+fn stageleft_root() -> TokenStream {
+    // Remove `_root` suffix.
+    let main_pkg_name = env!("CARGO_PKG_NAME").rsplit_once(['-', '_']).unwrap().0;
+    let stageleft_crate = proc_macro_crate::crate_name(main_pkg_name).unwrap_or_else(|_| {
+        panic!("Expected stageleft `{main_pkg_name}` package to be present in `Cargo.toml`")
+    });
+    match stageleft_crate {
+        proc_macro_crate::FoundCrate::Itself => quote! { stageleft },
+        proc_macro_crate::FoundCrate::Name(name) => {
+            let ident = syn::Ident::new(&name, Span::call_site());
+            quote! { #ident }
+        }
+    }
+}
+
 /// Creates a quoted expression for Hydro.
 ///
 /// Creates a quoted expression, which can be typechecked but has its AST serialized
@@ -16,15 +31,7 @@ mod quote_impl;
 /// `FnMut` context.
 #[proc_macro]
 pub fn q(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    let stageleft_crate = proc_macro_crate::crate_name("stageleft")
-        .expect("stageleft should be present in `Cargo.toml`");
-    let root = match stageleft_crate {
-        proc_macro_crate::FoundCrate::Itself => quote! { stageleft },
-        proc_macro_crate::FoundCrate::Name(name) => {
-            let ident = syn::Ident::new(&name, Span::call_site());
-            quote! { #ident }
-        }
-    };
+    let root = stageleft_root();
 
     proc_macro::TokenStream::from(quote_impl::q_impl(root, input.into()))
 }
@@ -107,15 +114,7 @@ fn gen_use_paths(
 
 #[proc_macro]
 pub fn quse_fn(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    let stageleft_crate = proc_macro_crate::crate_name("stageleft")
-        .expect("stageleft should be present in `Cargo.toml`");
-    let root = match stageleft_crate {
-        proc_macro_crate::FoundCrate::Itself => quote! { stageleft },
-        proc_macro_crate::FoundCrate::Name(name) => {
-            let ident = syn::Ident::new(&name, Span::call_site());
-            quote! { #ident }
-        }
-    };
+    let root = stageleft_root();
 
     let input_tokens = TokenStream::from(input);
     let import: syn::ItemUse = syn::parse_quote!(use #input_tokens;);
@@ -194,15 +193,7 @@ pub fn entry(
     attr: proc_macro::TokenStream,
     input: proc_macro::TokenStream,
 ) -> proc_macro::TokenStream {
-    let stageleft_crate = proc_macro_crate::crate_name("stageleft")
-        .expect("stageleft should be present in `Cargo.toml`");
-    let root = match stageleft_crate {
-        proc_macro_crate::FoundCrate::Itself => quote! { stageleft },
-        proc_macro_crate::FoundCrate::Name(name) => {
-            let ident = syn::Ident::new(&name, Span::call_site());
-            quote! { #ident }
-        }
-    };
+    let root = stageleft_root();
 
     let attr_params =
         syn::parse_macro_input!(attr with Punctuated<Type, Token![,]>::parse_terminated);
