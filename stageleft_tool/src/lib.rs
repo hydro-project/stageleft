@@ -489,7 +489,12 @@ pub fn gen_staged_pub() {
 pub fn gen_staged_deps() {
     let out_dir = env::var_os("OUT_DIR").unwrap();
 
-    let stageleft_name = match proc_macro_crate::crate_name("stageleft").unwrap() {
+    // Remove `_tool` suffix.
+    let main_pkg_name = env!("CARGO_PKG_NAME").rsplit_once(['-', '_']).unwrap().0;
+    let stageleft_crate = proc_macro_crate::crate_name(main_pkg_name).unwrap_or_else(|_| {
+        panic!("Expected stageleft {main_pkg_name} package to be present in `Cargo.toml`")
+    });
+    let stageleft_name = match stageleft_crate {
         proc_macro_crate::FoundCrate::Itself => syn::Ident::new("stageleft", Span::call_site()),
         proc_macro_crate::FoundCrate::Name(name) => syn::Ident::new(&name, Span::call_site()),
     };
