@@ -176,17 +176,16 @@ struct ElimClosureToInfer;
 
 impl VisitMut for ElimClosureToInfer {
     fn visit_type_mut(&mut self, i: &mut syn::Type) {
-        if let syn::Type::Path(p) = i {
-            if p.path
+        if let syn::Type::Path(p) = i
+            && p.path
                 .segments
                 .iter()
                 .any(|s| s.ident == "CLOSURE_TO_INFER")
-            {
-                *i = syn::Type::Infer(TypeInfer {
-                    underscore_token: Default::default(),
-                });
-                return;
-            }
+        {
+            *i = syn::Type::Infer(TypeInfer {
+                underscore_token: Default::default(),
+            });
+            return;
         }
 
         syn::visit_mut::visit_type_mut(self, i);
