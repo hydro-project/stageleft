@@ -9,17 +9,21 @@ pub(crate) mod submodule;
 static GLOBAL_VAR: i32 = 42;
 
 #[stageleft::entry]
-pub fn using_global_var(_ctx: BorrowBounds<'_>) -> impl Quoted<i32> {
+pub fn using_global_var(_ctx: BorrowBounds<'_>) -> impl Quoted<'_, i32> {
     q!(GLOBAL_VAR)
 }
 
 #[stageleft::entry]
-pub fn using_rand(_ctx: BorrowBounds<'_>) -> impl Quoted<i32> {
+pub fn using_rand(_ctx: BorrowBounds<'_>) -> impl Quoted<'_, i32> {
     q!(rand::random::<i32>())
 }
 
 #[stageleft::entry]
-fn raise_to_power(_ctx: BorrowBounds<'_>, value: RuntimeData<i32>, power: u32) -> impl Quoted<i32> {
+fn raise_to_power(
+    _ctx: BorrowBounds<'_>,
+    value: RuntimeData<i32>,
+    power: u32,
+) -> impl Quoted<'_, i32> {
     if power == 1 {
         q!(value).boxed()
     } else if power % 2 == 0 {

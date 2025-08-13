@@ -107,13 +107,13 @@ impl VisitMut for InlineTopLevelMod {
     fn visit_file_mut(&mut self, i: &mut syn::File) {
         i.attrs = vec![];
         i.items.iter_mut().for_each(|i| {
-            if let syn::Item::Macro(e) = i {
-                if e.mac.path.to_token_stream().to_string() == "stageleft :: top_level_mod" {
-                    let inner = &e.mac.tokens;
-                    *i = parse_quote!(
-                        pub mod #inner;
-                    );
-                }
+            if let syn::Item::Macro(e) = i
+                && e.mac.path.to_token_stream().to_string() == "stageleft :: top_level_mod"
+            {
+                let inner = &e.mac.tokens;
+                *i = parse_quote!(
+                    pub mod #inner;
+                );
             }
         });
     }
@@ -121,6 +121,7 @@ impl VisitMut for InlineTopLevelMod {
 
 struct GenFinalPubVistor {
     current_mod: Option<syn::Path>,
+    all_macros: Vec<syn::Ident>,
     test_mode: bool,
 }
 
@@ -349,6 +350,25 @@ impl VisitMut for GenFinalPubVistor {
                     *i = parse_quote!(#(#e_attrs)* pub use #cur_path::#e_name;);
                     return;
                 }
+            } else if let syn::Item::Macro(m) = i {
+                if is_runtime(&m.attrs) {
+                    m.attrs.insert(
+                        0,
+                        parse_quote!(#[cfg(all(stageleft_macro, not(stageleft_macro)))]),
+                    );
+                    return;
+                }
+
+                if m.attrs
+                    .iter()
+                    .any(|a| a.to_token_stream().to_string() == "# [macro_export]")
+                {
+                    m.attrs.insert(
+                        0,
+                        parse_quote!(#[cfg(all(stageleft_macro, not(stageleft_macro)))]),
+                    );
+                    self.all_macros.push(m.ident.as_ref().unwrap().clone());
+                }
             } else if let syn::Item::Impl(e) = i {
                 // TODO(shadaj): emit impls if the struct is private
                 // currently, we just skip all impls
@@ -438,23 +458,44 @@ fn gen_deps_module(stageleft_name: syn::Ident, manifest_path: &Path) -> syn::Ite
     }
 }
 
+/// Generates the contents of `mod __staged`, which contains a copy of the crate's code but with
+/// all APIs made public so they can be resolved when quoted code is spliced.
+fn gen_staged_mod(lib_path: &Path, orig_crate_ident: syn::Path, test_mode: bool) -> syn::File {
+    let mut orig_flow_lib = syn_inline_mod::parse_and_inline_modules(lib_path);
+    InlineTopLevelMod {}.visit_file_mut(&mut orig_flow_lib);
+
+    let mut flow_lib_pub = syn_inline_mod::parse_and_inline_modules(lib_path);
+
+    let mut final_pub_visitor = GenFinalPubVistor {
+        current_mod: Some(parse_quote!(#orig_crate_ident)),
+        test_mode,
+        all_macros: vec![],
+    };
+    final_pub_visitor.visit_file_mut(&mut flow_lib_pub);
+
+    // macros exported with `#[macro_export]` are placed at the top-level of the crate,
+    // so we need to pull them into the `mod __staged` so that relative imports resolve
+    // correctly
+    for exported_macro in final_pub_visitor.all_macros {
+        flow_lib_pub
+            .items
+            .push(parse_quote!(pub use #orig_crate_ident::#exported_macro;));
+    }
+
+    flow_lib_pub
+}
+
+/// Generates the contents for `__staged` when it will be emitted in "trybuild mode", which means that
+/// it is included inline next to the spliced code that uses it, with the original crate available as
+/// a dependency.
 pub fn gen_staged_trybuild(
     lib_path: &Path,
     manifest_path: &Path,
     orig_crate_name: String,
     test_mode: bool,
 ) -> syn::File {
-    let mut orig_flow_lib = syn_inline_mod::parse_and_inline_modules(lib_path);
-    InlineTopLevelMod {}.visit_file_mut(&mut orig_flow_lib);
-
-    let mut flow_lib_pub = syn_inline_mod::parse_and_inline_modules(lib_path);
-
-    let orig_crate_ident = syn::Ident::new(&orig_crate_name, Span::call_site());
-    let mut final_pub_visitor = GenFinalPubVistor {
-        current_mod: Some(parse_quote!(#orig_crate_ident)),
-        test_mode,
-    };
-    final_pub_visitor.visit_file_mut(&mut flow_lib_pub);
+    let crate_name = syn::Ident::new(&orig_crate_name, Span::call_site());
+    let flow_lib_pub = gen_staged_mod(lib_path, parse_quote!(#crate_name), test_mode);
 
     let deps_mod = gen_deps_module(parse_quote!(stageleft), manifest_path);
 
@@ -464,19 +505,11 @@ pub fn gen_staged_trybuild(
     }
 }
 
+#[doc(hidden)]
 pub fn gen_staged_pub() {
     let out_dir = env::var_os("OUT_DIR").unwrap();
 
-    let mut orig_flow_lib = syn_inline_mod::parse_and_inline_modules(Path::new("src/lib.rs"));
-    InlineTopLevelMod {}.visit_file_mut(&mut orig_flow_lib);
-
-    let mut flow_lib_pub = syn_inline_mod::parse_and_inline_modules(Path::new("src/lib.rs"));
-
-    let mut final_pub_visitor = GenFinalPubVistor {
-        current_mod: Some(parse_quote!(crate)),
-        test_mode: false,
-    };
-    final_pub_visitor.visit_file_mut(&mut flow_lib_pub);
+    let flow_lib_pub = gen_staged_mod(Path::new("src/lib.rs"), parse_quote!(crate), false);
 
     fs::write(
         Path::new(&out_dir).join("lib_pub.rs"),
@@ -486,6 +519,7 @@ pub fn gen_staged_pub() {
     println!("cargo::rerun-if-changed=src");
 }
 
+#[doc(hidden)]
 pub fn gen_staged_deps() {
     let out_dir = env::var_os("OUT_DIR").unwrap();
 
