@@ -195,6 +195,40 @@ pub trait QuotedWithContext<'a, T, Ctx>: FreeVariableWithContext<Ctx, O = T> {
         }
     }
 
+    fn splice_fn2_ctx<I1, I2, O>(self, ctx: &Ctx) -> syn::Expr
+    where
+        Self: Sized,
+        T: Fn(I1, I2) -> O,
+    {
+        let inner_expr = self.splice_untyped_ctx(ctx);
+        let stageleft_root = stageleft_root();
+
+        let in1_type = quote_type::<I1>();
+        let in2_type = quote_type::<I2>();
+        let out_type = quote_type::<O>();
+
+        syn::parse_quote! {
+            #stageleft_root::runtime_support::fn2_type_hint::<#in1_type, #in2_type, #out_type>(#inner_expr)
+        }
+    }
+
+    fn splice_fn2_borrow_ctx<I1, I2, O>(self, ctx: &Ctx) -> syn::Expr
+    where
+        Self: Sized,
+        T: Fn(&I1, &I2) -> O,
+    {
+        let inner_expr = self.splice_untyped_ctx(ctx);
+        let stageleft_root = stageleft_root();
+
+        let in1_type = quote_type::<I1>();
+        let in2_type = quote_type::<I2>();
+        let out_type = quote_type::<O>();
+
+        syn::parse_quote! {
+            #stageleft_root::runtime_support::fn2_borrow_type_hint::<#in1_type, #in2_type, #out_type>(#inner_expr)
+        }
+    }
+
     fn splice_fn2_borrow_mut_ctx<I1, I2, O>(self, ctx: &Ctx) -> syn::Expr
     where
         Self: Sized,
