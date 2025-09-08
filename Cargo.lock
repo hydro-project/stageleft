@@ -332,7 +332,7 @@ checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
 
 [[package]]
 name = "stageleft"
-version = "0.9.6"
+version = "0.9.7"
 dependencies = [
  "ctor",
  "proc-macro-crate",
@@ -344,7 +344,7 @@ dependencies = [
 
 [[package]]
 name = "stageleft_macro"
-version = "0.9.6"
+version = "0.9.7"
 dependencies = [
  "insta",
  "prettyplease",
@@ -383,7 +383,7 @@ dependencies = [
 
 [[package]]
 name = "stageleft_tool"
-version = "0.9.6"
+version = "0.9.7"
 dependencies = [
  "prettyplease",
  "proc-macro-crate",
