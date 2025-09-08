@@ -159,6 +159,11 @@ impl VisitMut for GenFinalPubVistor {
         syn::visit_mut::visit_item_struct_mut(self, i);
     }
 
+    fn visit_item_type_mut(&mut self, i: &mut syn::ItemType) {
+        i.vis = parse_quote!(pub);
+        syn::visit_mut::visit_item_type_mut(self, i);
+    }
+
     fn visit_field_mut(&mut self, i: &mut syn::Field) {
         i.vis = parse_quote!(pub);
         syn::visit_mut::visit_field_mut(self, i);
