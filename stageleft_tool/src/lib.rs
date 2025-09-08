@@ -159,6 +159,11 @@ impl VisitMut for GenFinalPubVistor {
         syn::visit_mut::visit_item_struct_mut(self, i);
     }
 
+    fn visit_item_type_mut(&mut self, i: &mut syn::ItemType) {
+        i.vis = parse_quote!(pub);
+        syn::visit_mut::visit_item_type_mut(self, i);
+    }
+
     fn visit_field_mut(&mut self, i: &mut syn::Field) {
         i.vis = parse_quote!(pub);
         syn::visit_mut::visit_field_mut(self, i);
@@ -408,16 +413,18 @@ fn gen_deps_module(stageleft_name: syn::Ident, manifest_path: &Path) -> syn::Ite
         .unwrap()
         .iter()
         .filter(|(_, v)| !v.get("optional").and_then(|o| o.as_bool()).unwrap_or(false))
-        .map(|(name, _v)| {
-            // We want the LHS renamed name, not the actual package name inside `_v.get("package")`.
-            // `foo_alias = { package = "foo", ... }` -> we want `use foo_alias;`.
-            name.replace('-', "_")
+        .map(|(name, v)| {
+            (
+                name.replace('-', "_"),
+                v.get("package")
+                    .map(|v| v.as_str().unwrap().replace("-", "_")),
+            )
         })
         .collect::<Vec<_>>();
 
     let deps_reexported = all_crate_names
         .iter()
-        .map(|name| {
+        .map(|(name, _)| {
             let name_ident = syn::Ident::new(name, Span::call_site());
             parse_quote! {
                 pub use #name_ident;
@@ -427,10 +434,11 @@ fn gen_deps_module(stageleft_name: syn::Ident, manifest_path: &Path) -> syn::Ite
 
     let deps_reexported_runtime = all_crate_names
         .iter()
-        .map(|name| {
+        .map(|(name, original_crate_name)| {
+            let original_crate_name_or_alias = original_crate_name.as_ref().unwrap_or(name);
             parse_quote! {
                 #stageleft_name::internal::add_deps_reexport(
-                    vec![#name],
+                    vec![#original_crate_name_or_alias],
                     vec![
                         option_env!("STAGELEFT_FINAL_CRATE_NAME").unwrap_or(env!("CARGO_PKG_NAME"))
                             .replace("-", "_"),
@@ -572,4 +580,48 @@ macro_rules! gen_final {
 
         $crate::gen_staged_deps()
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_gen_deps_module_uses_crate_name_or_alias() {
+        // Create a temporary Cargo.toml with a dependency that has a package alias
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "[dependencies]").unwrap();
+        writeln!(
+            temp_file,
+            r#"my_alias = {{ package = "actual_crate", version = "1.0" }}"#
+        )
+        .unwrap();
+        writeln!(temp_file, r#"regular_crate = "2.0""#).unwrap();
+        temp_file.flush().unwrap();
+
+        let stageleft_name = syn::Ident::new("stageleft", Span::call_site());
+        let deps_module = gen_deps_module(stageleft_name, temp_file.path());
+
+        let generated_code = quote::quote!(#deps_module).to_string();
+
+        assert!(
+            generated_code.contains(r#""actual_crate""#),
+            "Generated code should use actual crate name for aliased dependency: {}",
+            generated_code
+        );
+
+        assert!(
+            generated_code.contains(r#""regular_crate""#),
+            "Generated code should use dependency name for regular dependency: {}",
+            generated_code
+        );
+
+        assert!(
+            generated_code.contains("add_deps_reexport"),
+            "Generated code should contain add_deps_reexport calls: {}",
+            generated_code
+        );
+    }
 }

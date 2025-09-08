@@ -63,11 +63,11 @@ The main crate `foo` will need the following `Cargo.toml`:
 // ...
 
 [dependencies]
-stageleft = "0.9.5"
+stageleft = "0.9.6"
 foo_macro = { path = "../foo_macro" }
 
 [build-dependencies]
-stageleft_tool = "0.9.5"
+stageleft_tool = "0.9.6"
 ```
 
 The helper crate should have the following `Cargo.toml`:
@@ -88,7 +88,7 @@ macro = []
 // all dependencies of foo
 
 [build-dependencies]
-stageleft_tool = "0.9.5"
+stageleft_tool = "0.9.6"
 ```
 
 Next, you will need to set up `build.rs` scripts for both of your crates.
