@@ -1,0 +1,5 @@
+error[E0425]: cannot find value `xyz` in this scope
+ --> tests/compile-fail/unresolved_identifier.rs:7:9
+  |
+7 |         xyz
+  |         ^^^ not found in this scope
