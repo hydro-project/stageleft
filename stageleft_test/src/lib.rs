@@ -1,7 +1,7 @@
 #![cfg_attr(stageleft_macro, allow(dead_code))]
 stageleft::stageleft_crate!(stageleft_test_macro);
 
-use stageleft::{BorrowBounds, IntoQuotedOnce, Quoted, RuntimeData, q};
+use stageleft::{q, BorrowBounds, IntoQuotedOnce, Quoted, RuntimeData};
 
 pub(crate) mod features;
 pub(crate) mod submodule;
