@@ -1,5 +1,5 @@
 use proc_macro2::{Span, TokenStream};
-use quote::{ToTokens, quote};
+use quote::{quote, ToTokens};
 use syn::visit_mut::VisitMut;
 
 use self::free_variable::FreeVariableVisitor;
@@ -17,18 +17,16 @@ pub fn q_impl(root: TokenStream, toks: proc_macro2::TokenStream) -> TokenStream 
     };
 
     let unitialized_free_variables = visitor.free_variables.iter().map(|i| {
-        let i_without_span = syn::Ident::new(&i.to_string(), Span::call_site());
-
         let ident_shadow_str = format!("{i}__free");
         let i_shadow_ident = syn::Ident::new(&ident_shadow_str, Span::call_site());
 
         quote!(
             #[allow(unused, non_upper_case_globals, non_snake_case)]
             let #i_shadow_ident = {
-                let _out = ::#root::runtime_support::FreeVariableWithContext::uninitialized(&#i_without_span, __stageleft_ctx);
+                let _out = ::#root::runtime_support::FreeVariableWithContext::uninitialized(&#i, __stageleft_ctx);
                 __output.captures.push(::#root::internal::Capture {
                     ident: #ident_shadow_str,
-                    tokens: ::#root::runtime_support::FreeVariableWithContext::to_tokens(#i_without_span, __stageleft_ctx),
+                    tokens: ::#root::runtime_support::FreeVariableWithContext::to_tokens(#i, __stageleft_ctx),
                 });
                 _out
             };
