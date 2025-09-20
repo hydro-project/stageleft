@@ -26,7 +26,7 @@ fn raise_to_power(
 ) -> impl Quoted<'_, i32> {
     if power == 1 {
         q!(value).boxed()
-    } else if power % 2 == 0 {
+    } else if power.is_multiple_of(2) {
         let half_result = raise_to_power(_ctx, value, power / 2);
         q!({
             let v = half_result;
