@@ -263,15 +263,17 @@ impl VisitMut for GenFinalPubVistor {
                 || a.path().to_token_stream().to_string() == "tokio :: test"
         });
 
-        if is_ctor || is_test {
-            // don't want ctors or tests to be leaked into copied code
+        if is_runtime(&i.attrs) || is_ctor || is_test {
+            // no quoted code depends on this module, so we do not need to copy it
             i.attrs.insert(
                 0,
                 parse_quote!(#[cfg(all(stageleft_macro, not(stageleft_macro)))]),
             );
-        }
 
-        i.vis = parse_quote!(pub);
+            return;
+        } else {
+            i.vis = parse_quote!(pub);
+        }
 
         syn::visit_mut::visit_item_fn_mut(self, i);
     }
