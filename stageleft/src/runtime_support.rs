@@ -214,7 +214,9 @@ pub fn fn2_type_hint<'a, I1, I2, O>(f: impl Fn(I1, I2) -> O + 'a) -> impl Fn(I1,
     f
 }
 
-pub fn fn2_borrow_type_hint<'a, I1, I2, O>(f: impl Fn(&I1, &I2) -> O + 'a) -> impl Fn(&I1, &I2) -> O + 'a {
+pub fn fn2_borrow_type_hint<'a, I1, I2, O>(
+    f: impl Fn(&I1, &I2) -> O + 'a,
+) -> impl Fn(&I1, &I2) -> O + 'a {
     f
 }
 

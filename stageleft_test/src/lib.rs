@@ -1,7 +1,7 @@
 #![cfg_attr(stageleft_macro, allow(dead_code))]
 stageleft::stageleft_crate!(stageleft_test_macro);
 
-use stageleft::{q, BorrowBounds, IntoQuotedOnce, Quoted, RuntimeData};
+use stageleft::{BorrowBounds, IntoQuotedOnce, Quoted, RuntimeData, q};
 
 pub(crate) mod features;
 pub(crate) mod submodule;
@@ -26,7 +26,7 @@ fn raise_to_power(
 ) -> impl Quoted<'_, i32> {
     if power == 1 {
         q!(value).boxed()
-    } else if power % 2 == 0 {
+    } else if power.is_multiple_of(2) {
         let half_result = raise_to_power(_ctx, value, power / 2);
         q!({
             let v = half_result;
