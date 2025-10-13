@@ -343,9 +343,8 @@ impl<'a, T, F: QuotedWithContext<'a, T, ()>> Quoted<'a, T> for F {}
 
 fn stageleft_root() -> syn::Ident {
     let pkg_name = env!("CARGO_PKG_NAME");
-    let stageleft_crate = proc_macro_crate::crate_name(pkg_name).unwrap_or_else(|_| {
-        panic!("Expected stageleft `{pkg_name}` package to be present in `Cargo.toml`")
-    });
+    let stageleft_crate =
+        proc_macro_crate::crate_name(pkg_name).unwrap_or(FoundCrate::Name("stageleft".to_string()));
 
     match stageleft_crate {
         FoundCrate::Name(name) => syn::Ident::new(&name, Span::call_site()),
