@@ -122,7 +122,6 @@ impl VisitMut for InlineTopLevelMod {
 struct GenFinalPubVistor {
     current_mod: Option<syn::Path>,
     all_macros: Vec<syn::Ident>,
-    test_mode: bool,
 }
 
 fn get_cfg_attrs(attrs: &[syn::Attribute]) -> impl Iterator<Item = &syn::Attribute> + '_ {
@@ -228,14 +227,7 @@ impl VisitMut for GenFinalPubVistor {
             i.attrs
                 .retain(|a| a.to_token_stream().to_string() != "# [cfg (test)]");
 
-            if !self.test_mode {
-                // if test mode is not true, there are no quoted snippets behind #[cfg(test)],
-                // so no #[cfg(test)] modules will ever be reachable
-                i.attrs.insert(
-                    0,
-                    parse_quote!(#[cfg(all(stageleft_macro, not(stageleft_macro)))]),
-                );
-            }
+            i.attrs.insert(0, parse_quote!(#[cfg(stageleft_test_mode)]));
         }
 
         let old_mod = self.current_mod.clone();
@@ -468,7 +460,7 @@ fn gen_deps_module(stageleft_name: syn::Ident, manifest_path: &Path) -> syn::Ite
 
 /// Generates the contents of `mod __staged`, which contains a copy of the crate's code but with
 /// all APIs made public so they can be resolved when quoted code is spliced.
-fn gen_staged_mod(lib_path: &Path, orig_crate_ident: syn::Path, test_mode: bool) -> syn::File {
+fn gen_staged_mod(lib_path: &Path, orig_crate_ident: syn::Path) -> syn::File {
     let mut orig_flow_lib = syn_inline_mod::parse_and_inline_modules(lib_path);
     InlineTopLevelMod {}.visit_file_mut(&mut orig_flow_lib);
 
@@ -476,7 +468,6 @@ fn gen_staged_mod(lib_path: &Path, orig_crate_ident: syn::Path, test_mode: bool)
 
     let mut final_pub_visitor = GenFinalPubVistor {
         current_mod: Some(parse_quote!(#orig_crate_ident)),
-        test_mode,
         all_macros: vec![],
     };
     final_pub_visitor.visit_file_mut(&mut flow_lib_pub);
@@ -500,10 +491,9 @@ pub fn gen_staged_trybuild(
     lib_path: &Path,
     manifest_path: &Path,
     orig_crate_name: String,
-    test_mode: bool,
 ) -> syn::File {
     let crate_name = syn::Ident::new(&orig_crate_name, Span::call_site());
-    let flow_lib_pub = gen_staged_mod(lib_path, parse_quote!(#crate_name), test_mode);
+    let flow_lib_pub = gen_staged_mod(lib_path, parse_quote!(#crate_name));
 
     let deps_mod = gen_deps_module(parse_quote!(stageleft), manifest_path);
 
@@ -517,7 +507,7 @@ pub fn gen_staged_trybuild(
 pub fn gen_staged_pub() {
     let out_dir = env::var_os("OUT_DIR").unwrap();
 
-    let flow_lib_pub = gen_staged_mod(Path::new("src/lib.rs"), parse_quote!(crate), false);
+    let flow_lib_pub = gen_staged_mod(Path::new("src/lib.rs"), parse_quote!(crate));
 
     fs::write(
         Path::new(&out_dir).join("lib_pub.rs"),
@@ -561,11 +551,20 @@ macro_rules! gen_final {
         println!("cargo::rustc-check-cfg=cfg(stageleft_macro)");
         println!("cargo::rustc-check-cfg=cfg(stageleft_runtime)");
         println!("cargo::rustc-check-cfg=cfg(stageleft_trybuild)");
+        println!("cargo::rustc-check-cfg=cfg(stageleft_test_mode)");
         println!("cargo::rustc-check-cfg=cfg(feature, values(\"stageleft_macro_entrypoint\"))");
         println!("cargo::rustc-cfg=stageleft_runtime");
 
         println!("cargo::rerun-if-changed=build.rs");
         println!("cargo::rerun-if-env-changed=STAGELEFT_TRYBUILD_BUILD_STAGED");
+
+        let main_pkg_name = env!("CARGO_PKG_NAME").replace("-", "_");
+        let test_mode_var = format!("STAGELEFT_TEST_MODE_{}", main_pkg_name);
+        println!("cargo::rerun-if-env-changed={}", &test_mode_var);
+
+        if std::env::var(&test_mode_var).is_ok() {
+            println!("cargo::rustc-cfg=stageleft_test_mode");
+        }
 
         #[allow(
             unexpected_cfgs,

@@ -13,9 +13,9 @@ pub struct QuoteTokens {
 }
 
 pub fn get_final_crate_name(crate_name: &str) -> TokenStream {
-    let final_crate = proc_macro_crate::crate_name(crate_name).unwrap_or_else(|_| {
-        panic!("Expected consumer `{crate_name}` package to be present in `Cargo.toml`")
-    });
+    let final_crate = proc_macro_crate::crate_name(crate_name).unwrap_or(
+        proc_macro_crate::FoundCrate::Name(crate_name.replace('-', "_")),
+    );
 
     match final_crate {
         proc_macro_crate::FoundCrate::Itself => {
