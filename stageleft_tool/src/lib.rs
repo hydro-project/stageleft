@@ -122,7 +122,7 @@ impl VisitMut for InlineTopLevelMod {
 struct GenFinalPubVistor {
     current_mod: Option<syn::Path>,
     all_macros: Vec<syn::Ident>,
-    test_mode: bool,
+    test_mode_feature: Option<String>,
 }
 
 fn get_cfg_attrs(attrs: &[syn::Attribute]) -> impl Iterator<Item = &syn::Attribute> + '_ {
@@ -228,8 +228,10 @@ impl VisitMut for GenFinalPubVistor {
             i.attrs
                 .retain(|a| a.to_token_stream().to_string() != "# [cfg (test)]");
 
-            if !self.test_mode {
-                // if test mode is not true, there are no quoted snippets behind #[cfg(test)],
+            if let Some(feature) = &self.test_mode_feature {
+                i.attrs.insert(0, parse_quote!(#[cfg(feature = #feature)]));
+            } else {
+                // if test mode is not enabled, there are no quoted snippets behind #[cfg(test)],
                 // so no #[cfg(test)] modules will ever be reachable
                 i.attrs.insert(
                     0,
@@ -468,7 +470,11 @@ fn gen_deps_module(stageleft_name: syn::Ident, manifest_path: &Path) -> syn::Ite
 
 /// Generates the contents of `mod __staged`, which contains a copy of the crate's code but with
 /// all APIs made public so they can be resolved when quoted code is spliced.
-fn gen_staged_mod(lib_path: &Path, orig_crate_ident: syn::Path, test_mode: bool) -> syn::File {
+fn gen_staged_mod(
+    lib_path: &Path,
+    orig_crate_ident: syn::Path,
+    test_mode_feature: Option<String>,
+) -> syn::File {
     let mut orig_flow_lib = syn_inline_mod::parse_and_inline_modules(lib_path);
     InlineTopLevelMod {}.visit_file_mut(&mut orig_flow_lib);
 
@@ -476,7 +482,7 @@ fn gen_staged_mod(lib_path: &Path, orig_crate_ident: syn::Path, test_mode: bool)
 
     let mut final_pub_visitor = GenFinalPubVistor {
         current_mod: Some(parse_quote!(#orig_crate_ident)),
-        test_mode,
+        test_mode_feature,
         all_macros: vec![],
     };
     final_pub_visitor.visit_file_mut(&mut flow_lib_pub);
@@ -500,10 +506,10 @@ pub fn gen_staged_trybuild(
     lib_path: &Path,
     manifest_path: &Path,
     orig_crate_name: String,
-    test_mode: bool,
+    test_mode_feature: Option<String>,
 ) -> syn::File {
     let crate_name = syn::Ident::new(&orig_crate_name, Span::call_site());
-    let flow_lib_pub = gen_staged_mod(lib_path, parse_quote!(#crate_name), test_mode);
+    let flow_lib_pub = gen_staged_mod(lib_path, parse_quote!(#crate_name), test_mode_feature);
 
     let deps_mod = gen_deps_module(parse_quote!(stageleft), manifest_path);
 
@@ -517,7 +523,7 @@ pub fn gen_staged_trybuild(
 pub fn gen_staged_pub() {
     let out_dir = env::var_os("OUT_DIR").unwrap();
 
-    let flow_lib_pub = gen_staged_mod(Path::new("src/lib.rs"), parse_quote!(crate), false);
+    let flow_lib_pub = gen_staged_mod(Path::new("src/lib.rs"), parse_quote!(crate), None);
 
     fs::write(
         Path::new(&out_dir).join("lib_pub.rs"),
