@@ -208,6 +208,8 @@ impl VisitMut for GenFinalPubVistor {
                 },
             );
         }
+
+        syn::visit_mut::visit_path_mut(self, i);
     }
 
     fn visit_item_mod_mut(&mut self, i: &mut syn::ItemMod) {
