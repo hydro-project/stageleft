@@ -8,6 +8,15 @@ pub(crate) mod submodule;
 
 static GLOBAL_VAR: i32 = 42;
 
+mod private {
+    type SomeType = i32;
+
+    #[allow(dead_code)]
+    fn function_using_absolute_type_path(_xyz: Option<crate::private::SomeType>) -> crate::private::SomeType {
+        123
+    }
+}
+
 #[stageleft::entry]
 pub fn using_global_var(_ctx: BorrowBounds<'_>) -> impl Quoted<'_, i32> {
     q!(GLOBAL_VAR)
