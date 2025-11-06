@@ -18,7 +18,7 @@ syn = { version = "2.0.46", features = ["parsing", "extra-traits", "visit"] }
 proc-macro2 = "1.0.74"
 sha2 = "0.10.0"
 prettyplease = "0.2.0"
-toml_edit = "0.22.24"
+toml_edit = { version = "0.22.24", features = ["parse"] }
 proc-macro-crate = "3.3"
 
 [dev-dependencies]

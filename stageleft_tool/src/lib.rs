@@ -525,7 +525,21 @@ pub fn gen_staged_trybuild(
 pub fn gen_staged_pub() {
     let out_dir = env::var_os("OUT_DIR").unwrap();
 
-    let flow_lib_pub = gen_staged_mod(Path::new("src/lib.rs"), parse_quote!(crate), None);
+    let raw_toml_manifest =
+        fs::read_to_string(Path::new("Cargo.toml")).unwrap().parse::<DocumentMut>().unwrap();
+
+    let maybe_custom_lib_path = raw_toml_manifest
+        .get("lib")
+        .and_then(|lib| lib.get("path"))
+        .and_then(|path| path.as_str());
+
+    let flow_lib_pub = gen_staged_mod(
+        maybe_custom_lib_path
+            .map(Path::new)
+            .unwrap_or_else(|| Path::new("src/lib.rs")),
+        parse_quote!(crate),
+        None,
+    );
 
     fs::write(
         Path::new(&out_dir).join("lib_pub.rs"),
@@ -559,8 +573,6 @@ pub fn gen_staged_deps() {
         prettyplease::unparse(&parse_quote!(#deps_file)),
     )
     .unwrap();
-
-    println!("cargo::rerun-if-changed=Cargo.toml");
 }
 
 #[macro_export]
@@ -572,6 +584,7 @@ macro_rules! gen_final {
         println!("cargo::rustc-check-cfg=cfg(feature, values(\"stageleft_macro_entrypoint\"))");
         println!("cargo::rustc-cfg=stageleft_runtime");
 
+        println!("cargo::rerun-if-changed=Cargo.toml");
         println!("cargo::rerun-if-changed=build.rs");
         println!("cargo::rerun-if-env-changed=STAGELEFT_TRYBUILD_BUILD_STAGED");
 
