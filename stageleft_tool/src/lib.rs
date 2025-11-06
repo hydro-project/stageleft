@@ -573,8 +573,6 @@ pub fn gen_staged_deps() {
         prettyplease::unparse(&parse_quote!(#deps_file)),
     )
     .unwrap();
-
-    println!("cargo::rerun-if-changed=Cargo.toml");
 }
 
 #[macro_export]
@@ -586,6 +584,7 @@ macro_rules! gen_final {
         println!("cargo::rustc-check-cfg=cfg(feature, values(\"stageleft_macro_entrypoint\"))");
         println!("cargo::rustc-cfg=stageleft_runtime");
 
+        println!("cargo::rerun-if-changed=Cargo.toml");
         println!("cargo::rerun-if-changed=build.rs");
         println!("cargo::rerun-if-env-changed=STAGELEFT_TRYBUILD_BUILD_STAGED");
 
