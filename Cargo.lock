@@ -453,6 +453,7 @@ dependencies = [
  "syn",
  "syn-inline-mod",
  "tempfile",
+ "toml",
  "toml_edit",
 ]
 
