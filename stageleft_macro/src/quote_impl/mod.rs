@@ -37,7 +37,7 @@ pub fn q_impl(root: TokenStream, toks: proc_macro2::TokenStream) -> TokenStream 
         let i_shadow_ident = syn::Ident::new(&format!("{i}__free"), Span::call_site());
 
         quote!(
-            #[allow(unused, non_upper_case_globals, non_snake_case)]
+            #[allow(unused, non_upper_case_globals, non_snake_case, forget_non_drop)]
             ::std::mem::forget(#i_shadow_ident);
         )
     });
