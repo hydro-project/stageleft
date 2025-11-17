@@ -147,6 +147,17 @@ impl<Ctx> FreeVariableWithContext<Ctx> for &str {
     }
 }
 
+impl<Ctx> FreeVariableWithContext<Ctx> for String {
+    type O = &'static str;
+
+    fn to_tokens(self, _ctx: &Ctx) -> QuoteTokens {
+        QuoteTokens {
+            prelude: None,
+            expr: Some(quote!(#self)),
+        }
+    }
+}
+
 pub struct Import<T> {
     module_path: &'static str,
     crate_name: &'static str,
