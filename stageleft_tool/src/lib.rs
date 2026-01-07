@@ -525,8 +525,10 @@ pub fn gen_staged_trybuild(
 pub fn gen_staged_pub() {
     let out_dir = env::var_os("OUT_DIR").unwrap();
 
-    let raw_toml_manifest =
-        fs::read_to_string(Path::new("Cargo.toml")).unwrap().parse::<DocumentMut>().unwrap();
+    let raw_toml_manifest = fs::read_to_string(Path::new("Cargo.toml"))
+        .unwrap()
+        .parse::<DocumentMut>()
+        .unwrap();
 
     let maybe_custom_lib_path = raw_toml_manifest
         .get("lib")
