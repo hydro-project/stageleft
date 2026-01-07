@@ -4,6 +4,7 @@ stageleft::stageleft_crate!(stageleft_test_macro);
 use stageleft::{BorrowBounds, IntoQuotedOnce, Quoted, RuntimeData, q};
 
 pub(crate) mod features;
+pub(crate) mod property_example;
 pub(crate) mod submodule;
 
 static GLOBAL_VAR: i32 = 42;
@@ -12,7 +13,9 @@ mod private {
     type SomeType = i32;
 
     #[allow(dead_code)]
-    fn function_using_absolute_type_path(_xyz: Option<crate::private::SomeType>) -> crate::private::SomeType {
+    fn function_using_absolute_type_path(
+        _xyz: Option<crate::private::SomeType>,
+    ) -> crate::private::SomeType {
         123
     }
 }
