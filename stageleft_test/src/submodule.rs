@@ -1,4 +1,8 @@
-use stageleft::{BorrowBounds, Quoted, q};
+use std::marker::PhantomData;
+
+use stageleft::{
+    BorrowBounds, IntoQuotedMut, Quoted, QuotedWithContextWithProps, properties::Property, q,
+};
 
 struct PrivateStruct {
     a: u32,
@@ -46,4 +50,29 @@ pub mod subsubmodule {
     pub fn self_super_path<'a>(_ctx: BorrowBounds<'a>) -> impl Quoted<'a, i32> {
         q!(self::super::super::GLOBAL_VAR)
     }
+}
+
+pub struct PropertiesType<Abc = ()>(PhantomData<Abc>);
+
+impl PropertiesType<()> {
+    pub fn lol(self, _x: bool) -> PropertiesType<String> {
+        PropertiesType(PhantomData)
+    }
+}
+
+impl<Abc> Property for PropertiesType<Abc> {
+    type Root = PropertiesType<()>;
+
+    fn make_root(_target: &mut Option<Self>) -> Self::Root {
+        PropertiesType(PhantomData)
+    }
+}
+
+fn needing_properties<'a>(f: impl IntoQuotedMut<'a, i32, (), PropertiesType<String>>) {
+    let (_, _props) = f.splice_typed_ctx_props(&());
+}
+
+#[allow(unused, reason = "compilation test")]
+fn test_properties() {
+    needing_properties(q!(123, lol = true));
 }

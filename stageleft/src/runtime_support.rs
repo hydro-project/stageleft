@@ -1,11 +1,8 @@
-use std::borrow::BorrowMut;
 use std::marker::PhantomData;
 use std::mem::MaybeUninit;
 
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
-
-use crate::QuotedWithContext;
 
 pub struct QuoteTokens {
     pub prelude: Option<TokenStream>,
@@ -39,7 +36,7 @@ thread_local! {
 }
 
 pub fn set_macro_to_crate(macro_name: &str, crate_name: &str) {
-    MACRO_TO_CRATE.with_borrow_mut(|cell| {
+    MACRO_TO_CRATE.with(|cell| {
         *cell.borrow_mut() = Some((macro_name.to_string(), crate_name.to_string()));
     });
 }
@@ -81,10 +78,12 @@ impl ParseFromLiteral for bool {
 impl_parse_from_literal_numeric!(i8, i16, i32, i64, i128, isize);
 impl_parse_from_literal_numeric!(u8, u16, u32, u64, u128, usize);
 
-pub trait FreeVariableWithContext<Ctx> {
+/// A variant of `FreeVariableWithContext` that also has a properties type parameter.
+/// When `Props = ()`, this is equivalent to `FreeVariableWithContext`.
+pub trait FreeVariableWithContextWithProps<Ctx, Props = ()> {
     type O;
 
-    fn to_tokens(self, ctx: &Ctx) -> QuoteTokens
+    fn to_tokens(self, ctx: &Ctx) -> (QuoteTokens, Props)
     where
         Self: Sized;
 
@@ -96,12 +95,28 @@ pub trait FreeVariableWithContext<Ctx> {
     }
 }
 
+pub trait FreeVariableWithContext<Ctx>: FreeVariableWithContextWithProps<Ctx, ()> {
+    fn to_tokens(self, ctx: &Ctx) -> QuoteTokens
+    where
+        Self: Sized,
+    {
+        FreeVariableWithContextWithProps::to_tokens(self, ctx).0
+    }
+
+    fn uninitialized(&self, ctx: &Ctx) -> <Self as FreeVariableWithContextWithProps<Ctx, ()>>::O {
+        FreeVariableWithContextWithProps::uninitialized(self, ctx)
+    }
+}
+
+/// Blanket impl: anything implementing FreeVariableWithContextWithProps<Ctx, ()> also implements FreeVariableWithContext
+impl<Ctx, T: FreeVariableWithContextWithProps<Ctx, ()>> FreeVariableWithContext<Ctx> for T {}
+
 pub trait FreeVariable<O>: FreeVariableWithContext<(), O = O> {
     fn to_tokens(self) -> QuoteTokens
     where
         Self: Sized,
     {
-        FreeVariableWithContext::to_tokens(self, &())
+        FreeVariableWithContextWithProps::to_tokens(self, &()).0
     }
 
     fn uninitialized(&self) -> O {
@@ -117,18 +132,18 @@ impl<O, T: FreeVariableWithContext<(), O = O>> FreeVariable<O> for T {}
 macro_rules! impl_free_variable_from_literal_numeric {
     ($($ty:ty),*) => {
         $(
-            impl <Ctx> FreeVariableWithContext<Ctx> for $ty {
+            impl<Ctx> FreeVariableWithContextWithProps<Ctx, ()> for $ty {
                 type O = $ty;
 
-                fn to_tokens(self, _ctx: &Ctx) -> QuoteTokens {
-                    QuoteTokens {
+                fn to_tokens(self, _ctx: &Ctx) -> (QuoteTokens, ()) {
+                    (QuoteTokens {
                         prelude: None,
                         expr: Some(quote!(#self))
-                    }
+                    }, ())
                 }
             }
 
-            impl<'a, Ctx> QuotedWithContext<'a, $ty, Ctx> for $ty {}
+            impl<'a, Ctx> crate::QuotedWithContextWithProps<'a, $ty, Ctx, ()> for $ty {}
         )*
     };
 }
@@ -136,25 +151,31 @@ macro_rules! impl_free_variable_from_literal_numeric {
 impl_free_variable_from_literal_numeric!(i8, i16, i32, i64, i128, isize);
 impl_free_variable_from_literal_numeric!(u8, u16, u32, u64, u128, usize);
 
-impl<Ctx> FreeVariableWithContext<Ctx> for &str {
+impl<Ctx> FreeVariableWithContextWithProps<Ctx, ()> for &str {
     type O = &'static str;
 
-    fn to_tokens(self, _ctx: &Ctx) -> QuoteTokens {
-        QuoteTokens {
-            prelude: None,
-            expr: Some(quote!(#self)),
-        }
+    fn to_tokens(self, _ctx: &Ctx) -> (QuoteTokens, ()) {
+        (
+            QuoteTokens {
+                prelude: None,
+                expr: Some(quote!(#self)),
+            },
+            (),
+        )
     }
 }
 
-impl<Ctx> FreeVariableWithContext<Ctx> for String {
+impl<Ctx> FreeVariableWithContextWithProps<Ctx, ()> for String {
     type O = &'static str;
 
-    fn to_tokens(self, _ctx: &Ctx) -> QuoteTokens {
-        QuoteTokens {
-            prelude: None,
-            expr: Some(quote!(#self)),
-        }
+    fn to_tokens(self, _ctx: &Ctx) -> (QuoteTokens, ()) {
+        (
+            QuoteTokens {
+                prelude: None,
+                expr: Some(quote!(#self)),
+            },
+            (),
+        )
     }
 }
 
@@ -189,19 +210,22 @@ pub fn create_import<T>(
     }
 }
 
-impl<T, Ctx> FreeVariableWithContext<Ctx> for Import<T> {
+impl<T, Ctx> FreeVariableWithContextWithProps<Ctx, ()> for Import<T> {
     type O = T;
 
-    fn to_tokens(self, _ctx: &Ctx) -> QuoteTokens {
+    fn to_tokens(self, _ctx: &Ctx) -> (QuoteTokens, ()) {
         let final_crate_root = get_final_crate_name(self.crate_name);
 
         let module_path = syn::parse_str::<syn::Path>(self.module_path).unwrap();
         let parsed = syn::parse_str::<syn::Path>(self.path).unwrap();
         let as_ident = syn::Ident::new(self.as_name, Span::call_site());
-        QuoteTokens {
-            prelude: Some(quote!(use #final_crate_root::#module_path::#parsed as #as_ident;)),
-            expr: None,
-        }
+        (
+            QuoteTokens {
+                prelude: Some(quote!(use #final_crate_root::#module_path::#parsed as #as_ident;)),
+                expr: None,
+            },
+            (),
+        )
     }
 }
 
