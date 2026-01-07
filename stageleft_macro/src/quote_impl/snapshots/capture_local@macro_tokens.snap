@@ -4,7 +4,11 @@ expression: "prettyplease :: unparse(& wrapped)"
 ---
 fn main() {
     {
-        move |__stageleft_ctx: &_, __output: &mut ::stageleft::internal::QuotedOutput| {
+        move |
+            __stageleft_ctx: &_,
+            __output: &mut ::stageleft::internal::QuotedOutput,
+            __props: &mut _|
+        {
             #[allow(unused, non_upper_case_globals, non_snake_case)]
             let x__free = {
                 let _out = ::stageleft::runtime_support::FreeVariableWithContext::uninitialized(
@@ -27,6 +31,7 @@ fn main() {
                 __output.crate_name = option_env!("STAGELEFT_FINAL_CRATE_NAME")
                     .unwrap_or(env!("CARGO_PKG_NAME"));
                 __output.tokens = "x__free + 2";
+                *__props = Some(stageleft::properties::Property::make_root(__props));
                 #[allow(unused, non_upper_case_globals, non_snake_case, forget_non_drop)]
                 ::std::mem::forget(x__free);
                 unsafe {
