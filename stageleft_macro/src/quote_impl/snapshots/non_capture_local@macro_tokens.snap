@@ -4,12 +4,17 @@ expression: "prettyplease :: unparse(& wrapped)"
 ---
 fn main() {
     {
-        move |__stageleft_ctx: &_, __output: &mut ::stageleft::internal::QuotedOutput| {
+        move |
+            __stageleft_ctx: &_,
+            __output: &mut ::stageleft::internal::QuotedOutput,
+            __props: &mut _|
+        {
             if true {
                 __output.module_path = module_path!();
                 __output.crate_name = option_env!("STAGELEFT_FINAL_CRATE_NAME")
                     .unwrap_or(env!("CARGO_PKG_NAME"));
                 __output.tokens = "{ let x = 1 ; x + 2 }";
+                *__props = Some(stageleft::properties::Property::make_root(__props));
                 unsafe {
                     return ::std::mem::MaybeUninit::uninit().assume_init();
                 }

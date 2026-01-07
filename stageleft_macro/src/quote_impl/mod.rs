@@ -1,19 +1,68 @@
 use proc_macro2::{Span, TokenStream};
 use quote::{ToTokens, quote};
+use syn::parse::{Parse, ParseStream};
 use syn::visit_mut::VisitMut;
+use syn::{Expr, Ident, Token};
 
 use self::free_variable::FreeVariableVisitor;
 
 mod attempt_transform_macro;
 mod free_variable;
 
+/// A property annotation like `commutative = Kani` or `idempotent = ManualProof(/** something */)`
+struct PropertyAnnotation {
+    name: Ident,
+    _eq: Token![=],
+    value: Expr,
+}
+
+impl Parse for PropertyAnnotation {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        Ok(PropertyAnnotation {
+            name: input.parse()?,
+            _eq: input.parse()?,
+            value: input.parse()?,
+        })
+    }
+}
+
+/// Input to q! macro: expression followed by optional property annotations
+struct QInput {
+    expr: Expr,
+    properties: Vec<PropertyAnnotation>,
+}
+
+impl Parse for QInput {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let expr: Expr = input.parse()?;
+        let mut properties = Vec::new();
+
+        while input.peek(Token![,]) {
+            let _: Token![,] = input.parse()?;
+            if input.is_empty() {
+                break;
+            }
+            properties.push(input.parse()?);
+        }
+
+        Ok(QInput { expr, properties })
+    }
+}
+
 pub fn q_impl(root: TokenStream, toks: proc_macro2::TokenStream) -> TokenStream {
+    let parsed = syn::parse2::<QInput>(toks.clone());
+
+    let (expr_toks, properties) = match parsed {
+        Ok(input) => (input.expr.into_token_stream(), input.properties),
+        Err(_) => (toks, Vec::new()),
+    };
+
     let mut visitor = FreeVariableVisitor::default();
-    let rewritten_toks = if let Ok(mut expr) = syn::parse2::<syn::Expr>(toks.clone()) {
+    let rewritten_toks = if let Ok(mut expr) = syn::parse2::<syn::Expr>(expr_toks.clone()) {
         visitor.visit_expr_mut(&mut expr);
         expr.into_token_stream()
     } else {
-        toks
+        expr_toks
     };
 
     let unitialized_free_variables = visitor.free_variables.iter().map(|i| {
@@ -42,6 +91,18 @@ pub fn q_impl(root: TokenStream, toks: proc_macro2::TokenStream) -> TokenStream 
         )
     });
 
+    // Generate property builder chain: Default::default().a(b).c(d)
+    let props_builder = if properties.is_empty() {
+        quote!(#root::properties::Property::make_root(__props))
+    } else {
+        let builder_calls = properties.iter().map(|prop| {
+            let name = &prop.name;
+            let value = &prop.value;
+            quote!(.#name(#value))
+        });
+        quote!(#root::properties::Property::make_root(__props)#(#builder_calls)*)
+    };
+
     // necessary to ensure proper hover in Rust Analyzer
     let expr_without_spans = if std::env::var("RUST_ANALYZER_INTERNALS_DO_NOT_USE").is_ok() {
         // for unknown reasons, Rust Analyzer completions break if we emit the input as a string as well :(
@@ -51,13 +112,15 @@ pub fn q_impl(root: TokenStream, toks: proc_macro2::TokenStream) -> TokenStream 
     };
 
     quote!({
-        move |__stageleft_ctx: &_, __output: &mut ::#root::internal::QuotedOutput| {
+        move |__stageleft_ctx: &_, __output: &mut ::#root::internal::QuotedOutput, __props: &mut _| {
             #(#unitialized_free_variables;)*
 
             if true {
                 __output.module_path = module_path!();
                 __output.crate_name = option_env!("STAGELEFT_FINAL_CRATE_NAME").unwrap_or(env!("CARGO_PKG_NAME"));
                 __output.tokens = #expr_without_spans;
+
+                *__props = Some(#props_builder);
 
                 #(#uninit_forgets;)*
                 unsafe {
