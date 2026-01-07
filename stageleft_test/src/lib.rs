@@ -12,7 +12,9 @@ mod private {
     type SomeType = i32;
 
     #[allow(dead_code)]
-    fn function_using_absolute_type_path(_xyz: Option<crate::private::SomeType>) -> crate::private::SomeType {
+    fn function_using_absolute_type_path(
+        _xyz: Option<crate::private::SomeType>,
+    ) -> crate::private::SomeType {
         123
     }
 }
