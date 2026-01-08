@@ -37,7 +37,9 @@ mod rewrite_paths;
 pub mod runtime_support;
 mod type_name;
 
-use runtime_support::{FreeVariableWithContext, QuoteTokens, get_final_crate_name};
+pub mod properties;
+
+use runtime_support::{FreeVariableWithContextWithProps, QuoteTokens, get_final_crate_name};
 use syn::visit_mut::VisitMut;
 
 #[cfg(windows)]
@@ -121,31 +123,168 @@ impl QuotedContext for BorrowBounds<'_> {
     }
 }
 
-pub trait QuotedWithContext<'a, T, Ctx>: FreeVariableWithContext<Ctx, O = T> {
-    fn splice_untyped_ctx(self, ctx: &Ctx) -> syn::Expr
+pub trait QuotedWithContextWithProps<'a, T, Ctx, Props>:
+    FreeVariableWithContextWithProps<Ctx, Props, O = T>
+{
+    fn splice_untyped_ctx_props(self, ctx: &Ctx) -> (syn::Expr, Props)
     where
         Self: Sized,
     {
-        let res = self.to_tokens(ctx);
+        let (res, props) = FreeVariableWithContextWithProps::to_tokens(self, ctx);
         if res.prelude.is_some() {
             panic!("Quoted value should not have prelude");
         }
 
-        syn::parse2(res.expr.unwrap()).unwrap()
+        (syn::parse2(res.expr.unwrap()).unwrap(), props)
+    }
+
+    fn splice_typed_ctx_props(self, ctx: &Ctx) -> (syn::Expr, Props)
+    where
+        Self: Sized,
+    {
+        let (inner_expr, props) = self.splice_untyped_ctx_props(ctx);
+        let stageleft_root = stageleft_root();
+
+        let out_type = quote_type::<T>();
+
+        (
+            syn::parse_quote! {
+                #stageleft_root::runtime_support::type_hint::<#out_type>(#inner_expr)
+            },
+            props,
+        )
+    }
+
+    fn splice_fn0_ctx_props<O>(self, ctx: &Ctx) -> (syn::Expr, Props)
+    where
+        Self: Sized,
+        T: Fn() -> O,
+    {
+        let (inner_expr, props) = self.splice_untyped_ctx_props(ctx);
+        let stageleft_root = stageleft_root();
+
+        let out_type = quote_type::<O>();
+
+        (
+            syn::parse_quote! {
+                #stageleft_root::runtime_support::fn0_type_hint::<#out_type>(#inner_expr)
+            },
+            props,
+        )
+    }
+
+    fn splice_fn1_ctx_props<I, O>(self, ctx: &Ctx) -> (syn::Expr, Props)
+    where
+        Self: Sized,
+        T: Fn(I) -> O,
+    {
+        let (inner_expr, props) = self.splice_untyped_ctx_props(ctx);
+        let stageleft_root = stageleft_root();
+
+        let in_type = quote_type::<I>();
+        let out_type = quote_type::<O>();
+
+        (
+            syn::parse_quote! {
+                #stageleft_root::runtime_support::fn1_type_hint::<#in_type, #out_type>(#inner_expr)
+            },
+            props,
+        )
+    }
+
+    fn splice_fn1_borrow_ctx_props<I, O>(self, ctx: &Ctx) -> (syn::Expr, Props)
+    where
+        Self: Sized,
+        T: Fn(&I) -> O,
+    {
+        let (inner_expr, props) = self.splice_untyped_ctx_props(ctx);
+        let stageleft_root = stageleft_root();
+
+        let in_type = quote_type::<I>();
+        let out_type = quote_type::<O>();
+
+        (
+            syn::parse_quote! {
+                #stageleft_root::runtime_support::fn1_borrow_type_hint::<#in_type, #out_type>(#inner_expr)
+            },
+            props,
+        )
+    }
+
+    fn splice_fn2_ctx_props<I1, I2, O>(self, ctx: &Ctx) -> (syn::Expr, Props)
+    where
+        Self: Sized,
+        T: Fn(I1, I2) -> O,
+    {
+        let (inner_expr, props) = self.splice_untyped_ctx_props(ctx);
+        let stageleft_root = stageleft_root();
+
+        let in1_type = quote_type::<I1>();
+        let in2_type = quote_type::<I2>();
+        let out_type = quote_type::<O>();
+
+        (
+            syn::parse_quote! {
+                #stageleft_root::runtime_support::fn2_type_hint::<#in1_type, #in2_type, #out_type>(#inner_expr)
+            },
+            props,
+        )
+    }
+
+    fn splice_fn2_borrow_ctx_props<I1, I2, O>(self, ctx: &Ctx) -> (syn::Expr, Props)
+    where
+        Self: Sized,
+        T: Fn(&I1, &I2) -> O,
+    {
+        let (inner_expr, props) = self.splice_untyped_ctx_props(ctx);
+        let stageleft_root = stageleft_root();
+
+        let in1_type = quote_type::<I1>();
+        let in2_type = quote_type::<I2>();
+        let out_type = quote_type::<O>();
+
+        (
+            syn::parse_quote! {
+                #stageleft_root::runtime_support::fn2_borrow_type_hint::<#in1_type, #in2_type, #out_type>(#inner_expr)
+            },
+            props,
+        )
+    }
+
+    fn splice_fn2_borrow_mut_ctx_props<I1, I2, O>(self, ctx: &Ctx) -> (syn::Expr, Props)
+    where
+        Self: Sized,
+        T: Fn(&mut I1, I2) -> O,
+    {
+        let (inner_expr, props) = self.splice_untyped_ctx_props(ctx);
+        let stageleft_root = stageleft_root();
+
+        let in1_type = quote_type::<I1>();
+        let in2_type = quote_type::<I2>();
+        let out_type = quote_type::<O>();
+
+        (
+            syn::parse_quote! {
+                #stageleft_root::runtime_support::fn2_borrow_mut_type_hint::<#in1_type, #in2_type, #out_type>(#inner_expr)
+            },
+            props,
+        )
+    }
+}
+
+pub trait QuotedWithContext<'a, T, Ctx>: QuotedWithContextWithProps<'a, T, Ctx, ()> {
+    fn splice_untyped_ctx(self, ctx: &Ctx) -> syn::Expr
+    where
+        Self: Sized,
+    {
+        QuotedWithContextWithProps::splice_untyped_ctx_props(self, ctx).0
     }
 
     fn splice_typed_ctx(self, ctx: &Ctx) -> syn::Expr
     where
         Self: Sized,
     {
-        let inner_expr = self.splice_untyped_ctx(ctx);
-        let stageleft_root = stageleft_root();
-
-        let out_type = quote_type::<T>();
-
-        syn::parse_quote! {
-            #stageleft_root::runtime_support::type_hint::<#out_type>(#inner_expr)
-        }
+        QuotedWithContextWithProps::splice_typed_ctx_props(self, ctx).0
     }
 
     fn splice_fn0_ctx<O>(self, ctx: &Ctx) -> syn::Expr
@@ -153,14 +292,7 @@ pub trait QuotedWithContext<'a, T, Ctx>: FreeVariableWithContext<Ctx, O = T> {
         Self: Sized,
         T: Fn() -> O,
     {
-        let inner_expr = self.splice_untyped_ctx(ctx);
-        let stageleft_root = stageleft_root();
-
-        let out_type = quote_type::<O>();
-
-        syn::parse_quote! {
-            #stageleft_root::runtime_support::fn0_type_hint::<#out_type>(#inner_expr)
-        }
+        QuotedWithContextWithProps::splice_fn0_ctx_props(self, ctx).0
     }
 
     fn splice_fn1_ctx<I, O>(self, ctx: &Ctx) -> syn::Expr
@@ -168,15 +300,7 @@ pub trait QuotedWithContext<'a, T, Ctx>: FreeVariableWithContext<Ctx, O = T> {
         Self: Sized,
         T: Fn(I) -> O,
     {
-        let inner_expr = self.splice_untyped_ctx(ctx);
-        let stageleft_root = stageleft_root();
-
-        let in_type = quote_type::<I>();
-        let out_type = quote_type::<O>();
-
-        syn::parse_quote! {
-            #stageleft_root::runtime_support::fn1_type_hint::<#in_type, #out_type>(#inner_expr)
-        }
+        QuotedWithContextWithProps::splice_fn1_ctx_props(self, ctx).0
     }
 
     fn splice_fn1_borrow_ctx<I, O>(self, ctx: &Ctx) -> syn::Expr
@@ -184,15 +308,7 @@ pub trait QuotedWithContext<'a, T, Ctx>: FreeVariableWithContext<Ctx, O = T> {
         Self: Sized,
         T: Fn(&I) -> O,
     {
-        let inner_expr = self.splice_untyped_ctx(ctx);
-        let stageleft_root = stageleft_root();
-
-        let in_type = quote_type::<I>();
-        let out_type = quote_type::<O>();
-
-        syn::parse_quote! {
-            #stageleft_root::runtime_support::fn1_borrow_type_hint::<#in_type, #out_type>(#inner_expr)
-        }
+        QuotedWithContextWithProps::splice_fn1_borrow_ctx_props(self, ctx).0
     }
 
     fn splice_fn2_ctx<I1, I2, O>(self, ctx: &Ctx) -> syn::Expr
@@ -200,16 +316,7 @@ pub trait QuotedWithContext<'a, T, Ctx>: FreeVariableWithContext<Ctx, O = T> {
         Self: Sized,
         T: Fn(I1, I2) -> O,
     {
-        let inner_expr = self.splice_untyped_ctx(ctx);
-        let stageleft_root = stageleft_root();
-
-        let in1_type = quote_type::<I1>();
-        let in2_type = quote_type::<I2>();
-        let out_type = quote_type::<O>();
-
-        syn::parse_quote! {
-            #stageleft_root::runtime_support::fn2_type_hint::<#in1_type, #in2_type, #out_type>(#inner_expr)
-        }
+        QuotedWithContextWithProps::splice_fn2_ctx_props(self, ctx).0
     }
 
     fn splice_fn2_borrow_ctx<I1, I2, O>(self, ctx: &Ctx) -> syn::Expr
@@ -217,16 +324,7 @@ pub trait QuotedWithContext<'a, T, Ctx>: FreeVariableWithContext<Ctx, O = T> {
         Self: Sized,
         T: Fn(&I1, &I2) -> O,
     {
-        let inner_expr = self.splice_untyped_ctx(ctx);
-        let stageleft_root = stageleft_root();
-
-        let in1_type = quote_type::<I1>();
-        let in2_type = quote_type::<I2>();
-        let out_type = quote_type::<O>();
-
-        syn::parse_quote! {
-            #stageleft_root::runtime_support::fn2_borrow_type_hint::<#in1_type, #in2_type, #out_type>(#inner_expr)
-        }
+        QuotedWithContextWithProps::splice_fn2_borrow_ctx_props(self, ctx).0
     }
 
     fn splice_fn2_borrow_mut_ctx<I1, I2, O>(self, ctx: &Ctx) -> syn::Expr
@@ -234,16 +332,7 @@ pub trait QuotedWithContext<'a, T, Ctx>: FreeVariableWithContext<Ctx, O = T> {
         Self: Sized,
         T: Fn(&mut I1, I2) -> O,
     {
-        let inner_expr = self.splice_untyped_ctx(ctx);
-        let stageleft_root = stageleft_root();
-
-        let in1_type = quote_type::<I1>();
-        let in2_type = quote_type::<I2>();
-        let out_type = quote_type::<O>();
-
-        syn::parse_quote! {
-            #stageleft_root::runtime_support::fn2_borrow_mut_type_hint::<#in1_type, #in2_type, #out_type>(#inner_expr)
-        }
+        QuotedWithContextWithProps::splice_fn2_borrow_mut_ctx_props(self, ctx).0
     }
 
     fn splice_untyped(self) -> syn::Expr
@@ -251,7 +340,7 @@ pub trait QuotedWithContext<'a, T, Ctx>: FreeVariableWithContext<Ctx, O = T> {
         Self: Sized,
         Ctx: Default,
     {
-        self.splice_untyped_ctx(&Default::default())
+        QuotedWithContext::splice_untyped_ctx(self, &Default::default())
     }
 
     fn splice_typed(self) -> syn::Expr
@@ -259,7 +348,7 @@ pub trait QuotedWithContext<'a, T, Ctx>: FreeVariableWithContext<Ctx, O = T> {
         Self: Sized,
         Ctx: Default,
     {
-        let inner_expr = self.splice_untyped();
+        let inner_expr = QuotedWithContext::splice_untyped(self);
         let stageleft_root = stageleft_root();
 
         let out_type = quote_type::<T>();
@@ -275,7 +364,7 @@ pub trait QuotedWithContext<'a, T, Ctx>: FreeVariableWithContext<Ctx, O = T> {
         Ctx: Default,
         T: Fn() -> O,
     {
-        let inner_expr = self.splice_untyped();
+        let inner_expr = QuotedWithContext::splice_untyped(self);
         let stageleft_root = stageleft_root();
 
         let out_type = quote_type::<O>();
@@ -291,7 +380,7 @@ pub trait QuotedWithContext<'a, T, Ctx>: FreeVariableWithContext<Ctx, O = T> {
         Ctx: Default,
         T: Fn(I) -> O,
     {
-        let inner_expr = self.splice_untyped();
+        let inner_expr = QuotedWithContext::splice_untyped(self);
         let stageleft_root = stageleft_root();
 
         let in_type = quote_type::<I>();
@@ -308,7 +397,7 @@ pub trait QuotedWithContext<'a, T, Ctx>: FreeVariableWithContext<Ctx, O = T> {
         Ctx: Default,
         T: Fn(&I) -> O,
     {
-        let inner_expr = self.splice_untyped();
+        let inner_expr = QuotedWithContext::splice_untyped(self);
         let stageleft_root = stageleft_root();
 
         let in_type = quote_type::<I>();
@@ -325,7 +414,7 @@ pub trait QuotedWithContext<'a, T, Ctx>: FreeVariableWithContext<Ctx, O = T> {
         Ctx: Default,
         T: Fn(&mut I1, I2) -> O,
     {
-        let inner_expr = self.splice_untyped();
+        let inner_expr = QuotedWithContext::splice_untyped(self);
         let stageleft_root = stageleft_root();
 
         let in1_type = quote_type::<I1>();
@@ -336,6 +425,11 @@ pub trait QuotedWithContext<'a, T, Ctx>: FreeVariableWithContext<Ctx, O = T> {
             #stageleft_root::runtime_support::fn2_borrow_mut_type_hint::<#in1_type, #in2_type, #out_type>(#inner_expr)
         }
     }
+}
+
+impl<'a, T, Ctx, F: QuotedWithContextWithProps<'a, T, Ctx, ()>> QuotedWithContext<'a, T, Ctx>
+    for F
+{
 }
 
 pub trait Quoted<'a, T>: QuotedWithContext<'a, T, ()> {}
@@ -353,10 +447,12 @@ fn stageleft_root() -> syn::Ident {
     }
 }
 
-pub trait IntoQuotedOnce<'a, T, Ctx>:
-    for<'b> FnOnce(&'b Ctx, &mut QuotedOutput) -> T + 'a + QuotedWithContext<'a, T, Ctx>
+pub trait IntoQuotedOnce<'a, T, Ctx, Props = ()>:
+    for<'b> FnOnce(&'b Ctx, &mut QuotedOutput, &mut Option<Props>) -> T
+    + 'a
+    + QuotedWithContextWithProps<'a, T, Ctx, Props>
 {
-    fn boxed(self) -> Box<dyn IntoQuotedOnce<'a, T, Ctx>>
+    fn boxed(self) -> Box<dyn IntoQuotedOnce<'a, T, Ctx, Props>>
     where
         Self: Sized,
     {
@@ -364,22 +460,22 @@ pub trait IntoQuotedOnce<'a, T, Ctx>:
     }
 }
 
-impl<'a, T, Ctx, F: for<'b> FnOnce(&'b Ctx, &mut QuotedOutput) -> T + 'a>
-    QuotedWithContext<'a, T, Ctx> for F
+impl<'a, T, Ctx, Props, F: for<'b> FnOnce(&'b Ctx, &mut QuotedOutput, &mut Option<Props>) -> T + 'a>
+    QuotedWithContextWithProps<'a, T, Ctx, Props> for F
 {
 }
 
-impl<'a, T, Ctx, F: for<'b> FnOnce(&'b Ctx, &mut QuotedOutput) -> T + 'a> IntoQuotedOnce<'a, T, Ctx>
-    for F
+impl<'a, T, Ctx, Props, F: for<'b> FnOnce(&'b Ctx, &mut QuotedOutput, &mut Option<Props>) -> T + 'a>
+    IntoQuotedOnce<'a, T, Ctx, Props> for F
 {
 }
 
-impl<T, Ctx, F: for<'b> FnOnce(&'b Ctx, &mut QuotedOutput) -> T> FreeVariableWithContext<Ctx>
-    for F
+impl<T, Ctx, Props, F: for<'b> FnOnce(&'b Ctx, &mut QuotedOutput, &mut Option<Props>) -> T>
+    FreeVariableWithContextWithProps<Ctx, Props> for F
 {
     type O = T;
 
-    fn to_tokens(self, ctx: &Ctx) -> QuoteTokens {
+    fn to_tokens(self, ctx: &Ctx) -> (QuoteTokens, Props) {
         let mut output = QuotedOutput {
             module_path: "",
             crate_name: "",
@@ -387,8 +483,10 @@ impl<T, Ctx, F: for<'b> FnOnce(&'b Ctx, &mut QuotedOutput) -> T> FreeVariableWit
             captures: Vec::new(),
         };
 
+        let mut props = None;
+
         // this is an uninit value so we can't drop it
-        std::mem::forget(self(ctx, &mut output));
+        std::mem::forget(self(ctx, &mut output, &mut props));
 
         let instantiated_free_variables = output.captures.iter().flat_map(|capture| {
             let ident = syn::Ident::new(capture.ident, Span::call_site());
@@ -453,24 +551,31 @@ impl<T, Ctx, F: for<'b> FnOnce(&'b Ctx, &mut QuotedOutput) -> T> FreeVariableWit
             })
         };
 
-        QuoteTokens {
-            prelude: None,
-            expr: Some(with_env),
-        }
+        (
+            QuoteTokens {
+                prelude: None,
+                expr: Some(with_env),
+            },
+            props.unwrap(),
+        )
     }
 }
 
-pub trait IntoQuotedMut<'a, T, Ctx>: FnMut(&Ctx, &mut QuotedOutput) -> T + 'a {}
+pub trait IntoQuotedMut<'a, T, Ctx, Props = ()>:
+    FnMut(&Ctx, &mut QuotedOutput, &mut Option<Props>) -> T + 'a
+{
+}
 
-impl<'a, T, Ctx, F: FnMut(&Ctx, &mut QuotedOutput) -> T + 'a> IntoQuotedMut<'a, T, Ctx> for F {}
+impl<'a, T, Ctx, Props, F: FnMut(&Ctx, &mut QuotedOutput, &mut Option<Props>) -> T + 'a>
+    IntoQuotedMut<'a, T, Ctx, Props> for F
+{
+}
 
 /// Represents a piece of data that will be passed into the generated code
 pub struct RuntimeData<T> {
     ident: &'static str,
     _phantom: PhantomData<T>,
 }
-
-impl<'a, T: 'a, Ctx> QuotedWithContext<'a, T, Ctx> for RuntimeData<T> {}
 
 impl<T: Copy> Copy for RuntimeData<T> {}
 
@@ -489,14 +594,17 @@ impl<T> RuntimeData<T> {
     }
 }
 
-impl<T, Ctx> FreeVariableWithContext<Ctx> for RuntimeData<T> {
+impl<T, Ctx> FreeVariableWithContextWithProps<Ctx, ()> for RuntimeData<T> {
     type O = T;
 
-    fn to_tokens(self, _ctx: &Ctx) -> QuoteTokens {
+    fn to_tokens(self, _ctx: &Ctx) -> (QuoteTokens, ()) {
         let ident = syn::Ident::new(self.ident, Span::call_site());
-        QuoteTokens {
-            prelude: None,
-            expr: Some(quote!(#ident)),
-        }
+        (
+            QuoteTokens {
+                prelude: None,
+                expr: Some(quote!(#ident)),
+            },
+            (),
+        )
     }
 }
