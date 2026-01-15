@@ -20,4 +20,5 @@ stageleft_macro = { path = "../stageleft_macro", version = "^0.11.0" }
 ctor = "0.4.1"
 
 [dev-dependencies]
+slotmap = "1.0.0"
 trybuild = "1"

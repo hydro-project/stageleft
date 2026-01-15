@@ -3,7 +3,7 @@ use std::path::Path;
 use std::{env, fs};
 
 use proc_macro2::Span;
-use quote::ToTokens;
+use quote::{ToTokens, quote};
 use sha2::{Digest, Sha256};
 use syn::visit::Visit;
 use syn::visit_mut::VisitMut;
@@ -31,7 +31,7 @@ impl<'a> Visit<'a> for GenMacroVistor {
         let is_entry = i
             .attrs
             .iter()
-            .any(|a| a.path().to_token_stream().to_string() == "stageleft :: entry");
+            .any(|a| a.path().to_token_stream().to_string() == "stageleft :: entry"); // TODO(mingwei): use #root?
 
         if is_entry {
             let cur_path = &self.current_mod;
@@ -109,6 +109,7 @@ impl VisitMut for InlineTopLevelMod {
         i.items.iter_mut().for_each(|i| {
             if let syn::Item::Macro(e) = i
                 && e.mac.path.to_token_stream().to_string() == "stageleft :: top_level_mod"
+            // TODO(mingwei): use #root?
             {
                 let inner = &e.mac.tokens;
                 *i = parse_quote!(
@@ -285,7 +286,8 @@ impl VisitMut for GenFinalPubVistor {
     fn visit_item_mut(&mut self, i: &mut syn::Item) {
         // TODO(shadaj): warn if a pub struct or enum has private fields
         // and is not marked for runtime
-        if let Some(cur_path) = self.current_mod.as_ref() {
+        let cur_path = self.current_mod.as_ref().unwrap();
+        {
             if let syn::Item::Struct(e) = i {
                 if is_runtime(&e.attrs) {
                     e.attrs.insert(
@@ -363,11 +365,11 @@ impl VisitMut for GenFinalPubVistor {
                 }
             } else if let syn::Item::Macro(m) = i {
                 if is_runtime(&m.attrs) {
+                    // TODO(mingwei): Remove the item entirely (tricky).
                     m.attrs.insert(
                         0,
                         parse_quote!(#[cfg(all(stageleft_macro, not(stageleft_macro)))]),
                     );
-                    return;
                 }
 
                 if m.attrs
@@ -383,6 +385,7 @@ impl VisitMut for GenFinalPubVistor {
             } else if let syn::Item::Impl(e) = i {
                 // TODO(shadaj): emit impls if the struct is private
                 // currently, we just skip all impls
+                // TODO(mingwei): Remove the item entirely (tricky).
                 *i = parse_quote!(
                     #[cfg(all(stageleft_macro, not(stageleft_macro)))]
                     #e
@@ -393,13 +396,40 @@ impl VisitMut for GenFinalPubVistor {
         syn::visit_mut::visit_item_mut(self, i);
     }
 
+    fn visit_item_macro_mut(&mut self, i: &mut syn::ItemMacro) {
+        let curr_path = self.current_mod.as_ref().unwrap();
+        if i.mac
+            .path
+            .segments
+            .last()
+            .is_some_and(|m| m.ident == "stageleft_export")
+        {
+            match i.mac.parse_body_with(
+                syn::punctuated::Punctuated::<syn::Ident, syn::Token![,]>::parse_terminated,
+            ) {
+                Ok(idents) => {
+                    // Let the macro do the work, via `mod = ...`.
+                    i.mac.tokens = quote! {
+                        mod = #curr_path, #idents
+                    };
+                }
+                Err(err) => {
+                    // `::core::compile_error!("...");`
+                    let compile_err = err.into_compile_error();
+                    *i = parse_quote!(#compile_err);
+                }
+            }
+        }
+        syn::visit_mut::visit_item_macro_mut(self, i);
+    }
+
     fn visit_file_mut(&mut self, i: &mut syn::File) {
         i.attrs = vec![];
         i.items.retain(|i| match i {
             syn::Item::Macro(m) => {
-                m.mac.path.to_token_stream().to_string() != "stageleft :: stageleft_crate"
+                m.mac.path.to_token_stream().to_string() != "stageleft :: stageleft_crate" // TODO(mingwei): use #root?
                     && m.mac.path.to_token_stream().to_string()
-                        != "stageleft :: stageleft_no_entry_crate"
+                        != "stageleft :: stageleft_no_entry_crate" // TODO(mingwei): use #root?
             }
             _ => true,
         });
