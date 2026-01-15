@@ -393,7 +393,7 @@ impl VisitMut for GenFinalPubVistor {
                     }
                     (Some(exported_items), false) => {
                         *i = parse_quote! {
-                            pub use #cur_path::{ #( #exported_items)* };
+                            pub use #cur_path::{ #( #exported_items ),* };
                         };
                         return;
                     }
