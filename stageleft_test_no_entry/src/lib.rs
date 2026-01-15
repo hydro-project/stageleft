@@ -1,9 +1,14 @@
 stageleft::stageleft_no_entry_crate!();
 
-#[stageleft::export(MyKey)]
+stageleft::stageleft_export!(MyKey, OtherKey);
+
+#[cfg(stageleft_runtime)]
 slotmap::new_key_type! {
     /// An item generated within a macro.
     pub struct MyKey;
+
+    /// Just test the macro expansion is delimiting properly.
+    pub struct OtherKey;
 }
 
 /// Test that `stageleft::export` prevents splitbrain of `MyKey` type.

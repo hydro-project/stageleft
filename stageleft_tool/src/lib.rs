@@ -3,7 +3,7 @@ use std::path::Path;
 use std::{env, fs};
 
 use proc_macro2::Span;
-use quote::ToTokens;
+use quote::{ToTokens, quote};
 use sha2::{Digest, Sha256};
 use syn::visit::Visit;
 use syn::visit_mut::VisitMut;
@@ -133,26 +133,6 @@ fn get_cfg_attrs(attrs: &[syn::Attribute]) -> impl Iterator<Item = &syn::Attribu
 fn is_runtime(attrs: &[syn::Attribute]) -> bool {
     get_cfg_attrs(attrs)
         .any(|attr| attr.to_token_stream().to_string() == "# [cfg (stageleft_runtime)]")
-}
-
-fn get_stageleft_export_items(attrs: &[syn::Attribute]) -> Option<Vec<syn::Ident>> {
-    attrs
-        .iter()
-        .filter(|a| a.path().to_token_stream().to_string() == "stageleft :: export") // TODO(mingwei): use #root?
-        .filter_map(|a| {
-            if let Ok(list) = a.parse_args_with(
-                syn::punctuated::Punctuated::<syn::Ident, syn::Token![,]>::parse_terminated,
-            ) {
-                Some(list)
-            } else {
-                // Attribute macro itself should catch the error.
-                None
-            }
-        })
-        .fold(None, |mut acc, curr| {
-            acc.get_or_insert_default().extend(curr.iter().cloned());
-            acc
-        })
 }
 
 impl VisitMut for GenFinalPubVistor {
@@ -384,30 +364,12 @@ impl VisitMut for GenFinalPubVistor {
                     return;
                 }
             } else if let syn::Item::Macro(m) = i {
-                match (get_stageleft_export_items(&m.attrs), is_runtime(&m.attrs)) {
-                    (Some(_exported_items), true) => {
-                        *i = parse_quote!(
-                            ::core::compile_error!("Cannot have both `#[cfg(stageleft_runtime)]` (which disables the macro) and `#[stageleft::export]` (which re-exports macro-generated items).");
-                        );
-                        return;
-                    }
-                    (Some(exported_items), false) => {
-                        *i = parse_quote! {
-                            pub use #cur_path::{ #( #exported_items ),* };
-                        };
-                        return;
-                    }
-                    (None, true) => {
-                        // TODO(mingwei): Remove the item entirely in the future (remove-in-place is hard with VisitMut).
-                        m.attrs.insert(
-                            0,
-                            parse_quote!(#[cfg(all(stageleft_macro, not(stageleft_macro)))]),
-                        );
-                        // Continue
-                    }
-                    (None, false) => {
-                        // Continue
-                    }
+                if is_runtime(&m.attrs) {
+                    // TODO(mingwei): Remove the item entirely (tricky).
+                    m.attrs.insert(
+                        0,
+                        parse_quote!(#[cfg(all(stageleft_macro, not(stageleft_macro)))]),
+                    );
                 }
 
                 if m.attrs
@@ -423,6 +385,7 @@ impl VisitMut for GenFinalPubVistor {
             } else if let syn::Item::Impl(e) = i {
                 // TODO(shadaj): emit impls if the struct is private
                 // currently, we just skip all impls
+                // TODO(mingwei): Remove the item entirely (tricky).
                 *i = parse_quote!(
                     #[cfg(all(stageleft_macro, not(stageleft_macro)))]
                     #e
@@ -431,6 +394,33 @@ impl VisitMut for GenFinalPubVistor {
         }
 
         syn::visit_mut::visit_item_mut(self, i);
+    }
+
+    fn visit_item_macro_mut(&mut self, i: &mut syn::ItemMacro) {
+        let curr_path = self.current_mod.as_ref().unwrap();
+        if i.mac
+            .path
+            .segments
+            .last()
+            .is_some_and(|m| m.ident == "stageleft_export")
+        {
+            match i.mac.parse_body_with(
+                syn::punctuated::Punctuated::<syn::Ident, syn::Token![,]>::parse_terminated,
+            ) {
+                Ok(idents) => {
+                    // Let the macro do the work, via `mod = ...`.
+                    i.mac.tokens = quote! {
+                        mod = #curr_path, #idents
+                    };
+                }
+                Err(err) => {
+                    // `::core::compile_error!("...");`
+                    let compile_err = err.into_compile_error();
+                    *i = parse_quote!(#compile_err);
+                }
+            }
+        }
+        syn::visit_mut::visit_item_macro_mut(self, i);
     }
 
     fn visit_file_mut(&mut self, i: &mut syn::File) {
