@@ -140,14 +140,10 @@ fn get_stageleft_export_items(attrs: &[syn::Attribute]) -> Option<Vec<syn::Ident
         .iter()
         .filter(|a| a.path().to_token_stream().to_string() == "stageleft :: export") // TODO(mingwei): use #root?
         .filter_map(|a| {
-            if let Ok(list) = a.parse_args_with(
+            a.parse_args_with(
                 syn::punctuated::Punctuated::<syn::Ident, syn::Token![,]>::parse_terminated,
-            ) {
-                Some(list)
-            } else {
-                // Attribute macro itself should catch the error.
-                None
-            }
+            )
+            .ok()
         })
         .fold(None, |mut acc, curr| {
             acc.get_or_insert_default().extend(curr.iter().cloned());
