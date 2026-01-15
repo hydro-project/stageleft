@@ -1,0 +1,18 @@
+[package]
+name = "stageleft_test_no_entry"
+version = "0.0.0"
+publish = false
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[package.metadata.release]
+release = false
+
+[dependencies]
+stageleft = { path = "../stageleft", version = "^0.11.0" }
+
+slotmap = "1.0.0"
+
+[build-dependencies]
+stageleft_tool = { path = "../stageleft_tool", version = "^0.11.0" }

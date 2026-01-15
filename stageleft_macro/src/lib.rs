@@ -413,3 +413,38 @@ pub fn entry(
         #input_visibility use crate::__macro::#input_hash_ident as #input_name;
     })
 }
+
+/// Marks that a macro invocation creates one or more `pub` items. Must be invoked via `#[stageleft::export(...)], do not do `use`.
+///
+/// This ensures that the macro will not be re-invoked in staged code, and instead will use the original items.
+///
+/// ```rust,ignore
+/// #[stageleft::export(MyKey, MyOtherKey)]
+/// slotmap::new_key_type! {
+///     pub struct MyKey;
+///     pub struct MyOtherKey;
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn export(
+    attr: proc_macro::TokenStream,
+    input: proc_macro::TokenStream,
+) -> proc_macro::TokenStream {
+    // Parse to ensure the syntax is correct (comma-separated idents).
+    let idents =
+        syn::parse_macro_input!(attr with Punctuated::<syn::Ident, Token![,]>::parse_terminated);
+    let input = TokenStream::from(input);
+
+    let pub_uses = idents.iter().map(|i| {
+        quote_spanned! {i.span()=>
+            #[expect(unused_imports, reason = "ensures items exist and are pub")]
+            pub use #i as _;
+        }
+    });
+    quote! {
+        #input
+
+        #( #pub_uses )*
+    }
+    .into()
+}
