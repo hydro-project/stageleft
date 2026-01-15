@@ -414,7 +414,7 @@ pub fn entry(
     })
 }
 
-/// Marks that a macro invocation creates one or more `pub` items. Must be invoked via `#[stageleft::export(...)], do not do `use`.
+/// Marks that a macro invocation creates one or more `pub` items. Must be invoked via `#[stageleft::export(...)]`, do not do `use`.
 ///
 /// This ensures that the macro will not be re-invoked in staged code, and instead will use the original items.
 ///
