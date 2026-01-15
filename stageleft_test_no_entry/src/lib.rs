@@ -9,7 +9,7 @@ slotmap::new_key_type! {
 /// Test that `stageleft::export` prevents splitbrain of `MyKey` type.
 #[allow(dead_code)]
 fn splitbrain(st: SplitbrainStruct) {
-    // This gets turned into `crate::_staged::MyKey`
+    // This gets turned into `crate::__staged::MyKey`
     let _key: MyKey = st.my_key;
 }
 
