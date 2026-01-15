@@ -387,7 +387,7 @@ impl VisitMut for GenFinalPubVistor {
                 match (get_stageleft_export_items(&m.attrs), is_runtime(&m.attrs)) {
                     (Some(_exported_items), true) => {
                         *i = parse_quote!(
-                            ::core::compile_error!("Cannot have both `#[cfg(stageleft_runtime)]` (which removes the item) and `#[stageleft::export]` (which re-exports macro-generated items).");
+                            ::core::compile_error!("Cannot have both `#[cfg(stageleft_runtime)]` (which disables the macro) and `#[stageleft::export]` (which re-exports macro-generated items).");
                         );
                         return;
                     }
