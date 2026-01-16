@@ -525,14 +525,12 @@ pub fn gen_staged_trybuild(
     test_mode_feature: Option<String>,
 ) -> syn::File {
     let crate_name = syn::Ident::new(&orig_crate_name, Span::call_site());
-    let flow_lib_pub = gen_staged_mod(lib_path, parse_quote!(#crate_name), test_mode_feature);
+    let mut flow_lib_pub = gen_staged_mod(lib_path, parse_quote!(#crate_name), test_mode_feature);
 
     let deps_mod = gen_deps_module(parse_quote!(stageleft), manifest_path);
 
-    parse_quote! {
-        #deps_mod
-        #flow_lib_pub
-    }
+    flow_lib_pub.items.push(syn::Item::Mod(deps_mod));
+    flow_lib_pub
 }
 
 #[doc(hidden)]
