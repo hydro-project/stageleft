@@ -101,25 +101,6 @@ pub fn gen_macro(staged_path: &Path, crate_name: &str) {
     );
 }
 
-struct InlineTopLevelMod {}
-
-impl VisitMut for InlineTopLevelMod {
-    fn visit_file_mut(&mut self, i: &mut syn::File) {
-        i.attrs = vec![];
-        i.items.iter_mut().for_each(|i| {
-            if let syn::Item::Macro(e) = i
-                && e.mac.path.to_token_stream().to_string() == "stageleft :: top_level_mod"
-            // TODO(mingwei): use #root?
-            {
-                let inner = &e.mac.tokens;
-                *i = parse_quote!(
-                    pub mod #inner;
-                );
-            }
-        });
-    }
-}
-
 struct GenFinalPubVistor {
     current_mod: Option<syn::Path>,
     all_macros: Vec<syn::Ident>,
@@ -513,9 +494,6 @@ fn gen_staged_mod(
     orig_crate_ident: syn::Path,
     test_mode_feature: Option<String>,
 ) -> syn::File {
-    let mut orig_flow_lib = syn_inline_mod::parse_and_inline_modules(lib_path);
-    InlineTopLevelMod {}.visit_file_mut(&mut orig_flow_lib);
-
     let mut flow_lib_pub = syn_inline_mod::parse_and_inline_modules(lib_path);
 
     let mut final_pub_visitor = GenFinalPubVistor {
