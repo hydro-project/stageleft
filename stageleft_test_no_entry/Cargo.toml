@@ -10,9 +10,9 @@ repository.workspace = true
 release = false
 
 [dependencies]
-stageleft = { path = "../stageleft", version = "^0.11.0" }
+stageleft = { path = "../stageleft", version = "^0.12.0" }
 
 slotmap = "1.0.0"
 
 [build-dependencies]
-stageleft_tool = { path = "../stageleft_tool", version = "^0.11.0" }
+stageleft_tool = { path = "../stageleft_tool", version = "^0.12.0" }
