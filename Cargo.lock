@@ -390,6 +390,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
 
 [[package]]
+name = "slotmap"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bdd58c3c93c3d278ca835519292445cb4b0d4dc59ccfdf7ceadaab3f8aeb4038"
+dependencies = [
+ "version_check",
+]
+
+[[package]]
 name = "stageleft"
 version = "0.11.0"
 dependencies = [
@@ -397,6 +406,7 @@ dependencies = [
  "proc-macro-crate",
  "proc-macro2",
  "quote",
+ "slotmap",
  "stageleft_macro",
  "syn",
  "trybuild",
@@ -437,6 +447,15 @@ name = "stageleft_test_macro"
 version = "0.0.0"
 dependencies = [
  "rand",
+ "stageleft",
+ "stageleft_tool",
+]
+
+[[package]]
+name = "stageleft_test_no_entry"
+version = "0.0.0"
+dependencies = [
+ "slotmap",
  "stageleft",
  "stageleft_tool",
 ]

@@ -6,7 +6,7 @@ use proc_macro_crate::FoundCrate;
 use proc_macro2::Span;
 use quote::quote;
 
-pub use stageleft_macro::{entry, q, quse_fn, top_level_mod};
+pub use stageleft_macro::{entry, export, q, quse_fn, top_level_mod};
 pub use type_name::{add_private_reexport, quote_type};
 
 #[doc(hidden)]

@@ -1,0 +1,11 @@
+error[E0364]: `NotPubKey` is only public within the crate, and cannot be re-exported outside
+ --> tests/compile-fail/export_not_pub.rs:1:29
+  |
+1 | #[stageleft::export(PubKey, NotPubKey)]
+  |                             ^^^^^^^^^
+  |
+note: consider marking `NotPubKey` as `pub` in the imported module
+ --> tests/compile-fail/export_not_pub.rs:1:29
+  |
+1 | #[stageleft::export(PubKey, NotPubKey)]
+  |                             ^^^^^^^^^

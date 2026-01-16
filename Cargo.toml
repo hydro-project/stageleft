@@ -6,6 +6,7 @@ members = [
     "stageleft_test_macro",
     "stageleft_test_downstream",
     "stageleft_tool",
+    "stageleft_test_no_entry",
 ]
 
 resolver = "2"
