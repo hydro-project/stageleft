@@ -1,23 +1,18 @@
 [package]
-name = "stageleft_test_macro"
-publish = false
+name = "stageleft_test_no_entry"
 version = "0.0.0"
-edition = "2024"
+publish = false
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [package.metadata.release]
 release = false
 
-[features]
-test_feature = []
-
-[lib]
-proc-macro = true
-path = "../stageleft_test/src/lib.rs"
-
 [dependencies]
 stageleft = { path = "../stageleft", version = "^0.12.0" }
 
-rand_alias = { package = "rand", version = "0.9.0", features = ["thread_rng"] }
+slotmap = "1.0.0"
 
 [build-dependencies]
 stageleft_tool = { path = "../stageleft_tool", version = "^0.12.0" }

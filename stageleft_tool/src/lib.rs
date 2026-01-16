@@ -31,7 +31,7 @@ impl<'a> Visit<'a> for GenMacroVistor {
         let is_entry = i
             .attrs
             .iter()
-            .any(|a| a.path().to_token_stream().to_string() == "stageleft :: entry");
+            .any(|a| a.path().to_token_stream().to_string() == "stageleft :: entry"); // TODO(mingwei): use #root?
 
         if is_entry {
             let cur_path = &self.current_mod;
@@ -101,24 +101,6 @@ pub fn gen_macro(staged_path: &Path, crate_name: &str) {
     );
 }
 
-struct InlineTopLevelMod {}
-
-impl VisitMut for InlineTopLevelMod {
-    fn visit_file_mut(&mut self, i: &mut syn::File) {
-        i.attrs = vec![];
-        i.items.iter_mut().for_each(|i| {
-            if let syn::Item::Macro(e) = i
-                && e.mac.path.to_token_stream().to_string() == "stageleft :: top_level_mod"
-            {
-                let inner = &e.mac.tokens;
-                *i = parse_quote!(
-                    pub mod #inner;
-                );
-            }
-        });
-    }
-}
-
 struct GenFinalPubVistor {
     current_mod: Option<syn::Path>,
     all_macros: Vec<syn::Ident>,
@@ -132,6 +114,22 @@ fn get_cfg_attrs(attrs: &[syn::Attribute]) -> impl Iterator<Item = &syn::Attribu
 fn is_runtime(attrs: &[syn::Attribute]) -> bool {
     get_cfg_attrs(attrs)
         .any(|attr| attr.to_token_stream().to_string() == "# [cfg (stageleft_runtime)]")
+}
+
+fn get_stageleft_export_items(attrs: &[syn::Attribute]) -> Option<Vec<syn::Ident>> {
+    attrs
+        .iter()
+        .filter(|a| a.path().to_token_stream().to_string() == "stageleft :: export") // TODO(mingwei): use #root?
+        .filter_map(|a| {
+            a.parse_args_with(
+                syn::punctuated::Punctuated::<syn::Ident, syn::Token![,]>::parse_terminated,
+            )
+            .ok()
+        })
+        .fold(None, |mut acc, curr| {
+            acc.get_or_insert_default().extend(curr.iter().cloned());
+            acc
+        })
 }
 
 impl VisitMut for GenFinalPubVistor {
@@ -285,7 +283,8 @@ impl VisitMut for GenFinalPubVistor {
     fn visit_item_mut(&mut self, i: &mut syn::Item) {
         // TODO(shadaj): warn if a pub struct or enum has private fields
         // and is not marked for runtime
-        if let Some(cur_path) = self.current_mod.as_ref() {
+        let cur_path = self.current_mod.as_ref().unwrap();
+        {
             if let syn::Item::Struct(e) = i {
                 if is_runtime(&e.attrs) {
                     e.attrs.insert(
@@ -362,12 +361,30 @@ impl VisitMut for GenFinalPubVistor {
                     return;
                 }
             } else if let syn::Item::Macro(m) = i {
-                if is_runtime(&m.attrs) {
-                    m.attrs.insert(
-                        0,
-                        parse_quote!(#[cfg(all(stageleft_macro, not(stageleft_macro)))]),
-                    );
-                    return;
+                match (get_stageleft_export_items(&m.attrs), is_runtime(&m.attrs)) {
+                    (Some(_exported_items), true) => {
+                        *i = parse_quote!(
+                            ::core::compile_error!("Cannot have both `#[cfg(stageleft_runtime)]` (which disables the macro) and `#[stageleft::export]` (which re-exports macro-generated items).");
+                        );
+                        return;
+                    }
+                    (Some(exported_items), false) => {
+                        *i = parse_quote! {
+                            pub use #cur_path::{ #( #exported_items ),* };
+                        };
+                        return;
+                    }
+                    (None, true) => {
+                        // TODO(mingwei): Remove the item entirely in the future (remove-in-place is hard with VisitMut).
+                        m.attrs.insert(
+                            0,
+                            parse_quote!(#[cfg(all(stageleft_macro, not(stageleft_macro)))]),
+                        );
+                        // Continue
+                    }
+                    (None, false) => {
+                        // Continue
+                    }
                 }
 
                 if m.attrs
@@ -397,9 +414,9 @@ impl VisitMut for GenFinalPubVistor {
         i.attrs = vec![];
         i.items.retain(|i| match i {
             syn::Item::Macro(m) => {
-                m.mac.path.to_token_stream().to_string() != "stageleft :: stageleft_crate"
+                m.mac.path.to_token_stream().to_string() != "stageleft :: stageleft_crate" // TODO(mingwei): use #root?
                     && m.mac.path.to_token_stream().to_string()
-                        != "stageleft :: stageleft_no_entry_crate"
+                        != "stageleft :: stageleft_no_entry_crate" // TODO(mingwei): use #root?
             }
             _ => true,
         });
@@ -477,9 +494,6 @@ fn gen_staged_mod(
     orig_crate_ident: syn::Path,
     test_mode_feature: Option<String>,
 ) -> syn::File {
-    let mut orig_flow_lib = syn_inline_mod::parse_and_inline_modules(lib_path);
-    InlineTopLevelMod {}.visit_file_mut(&mut orig_flow_lib);
-
     let mut flow_lib_pub = syn_inline_mod::parse_and_inline_modules(lib_path);
 
     let mut final_pub_visitor = GenFinalPubVistor {
