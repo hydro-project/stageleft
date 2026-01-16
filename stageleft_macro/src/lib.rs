@@ -134,42 +134,6 @@ pub fn quse_fn(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     .into()
 }
 
-/// A utility for declaring top-level public modules in a Stageleft crate that exports macros.
-///
-/// This gets around errors in compiling the macro crate when there
-/// are `pub mod` declarations at the top-level file.
-///
-/// This macro will only work on nightly with `#![feature(proc_macro_hygiene)]`,
-/// but for stable builds you can manually achieve this by using the following
-/// pattern:
-///
-/// ```ignore
-/// #[cfg(not(stageleft_macro))]
-/// pub mod my_mod;
-///
-/// #[cfg(stageleft_macro)]
-/// mod my_mod;
-/// ```
-#[proc_macro_attribute]
-pub fn top_level_mod(
-    _attr: proc_macro::TokenStream,
-    input: proc_macro::TokenStream,
-) -> proc_macro::TokenStream {
-    let input: syn::ItemMod = syn::parse(input).unwrap();
-    let mut input_pub_crate = input.clone();
-    if let syn::Visibility::Public(_) = &input_pub_crate.vis {
-        input_pub_crate.vis = syn::parse_quote!(pub(crate));
-    }
-
-    proc_macro::TokenStream::from(quote! {
-        #[cfg(not(stageleft_macro))]
-        #input
-
-        #[cfg(stageleft_macro)]
-        #input_pub_crate
-    })
-}
-
 /// Defines an entrypoint for staged code, which will be available as a proc macro.
 /// The entrypoint must be a function that returns `impl Quoted<T>` for some type `T`.
 ///
