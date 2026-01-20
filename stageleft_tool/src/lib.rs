@@ -116,10 +116,6 @@ fn is_runtime(attrs: &[syn::Attribute]) -> bool {
         .any(|attr| attr.to_token_stream().to_string() == "# [cfg (stageleft_runtime)]")
 }
 
-fn has_cfg_false(attrs: &[syn::Attribute]) -> bool {
-    get_cfg_attrs(attrs).any(|attr| attr.to_token_stream().to_string() == "# [cfg (false)]")
-}
-
 fn get_stageleft_export_items(attrs: &[syn::Attribute]) -> Option<Vec<syn::Ident>> {
     attrs
         .iter()
@@ -134,6 +130,41 @@ fn get_stageleft_export_items(attrs: &[syn::Attribute]) -> Option<Vec<syn::Ident
             acc.get_or_insert_default().extend(curr.iter().cloned());
             acc
         })
+}
+
+fn item_attributes(item: &syn::Item) -> &[syn::Attribute] {
+    match item {
+        syn::Item::Const(i) => &i.attrs,
+        syn::Item::Enum(i) => &i.attrs,
+        syn::Item::ExternCrate(i) => &i.attrs,
+        syn::Item::Fn(i) => &i.attrs,
+        syn::Item::ForeignMod(i) => &i.attrs,
+        syn::Item::Impl(i) => &i.attrs,
+        syn::Item::Macro(i) => &i.attrs,
+        syn::Item::Mod(i) => &i.attrs,
+        syn::Item::Struct(i) => &i.attrs,
+        syn::Item::Trait(i) => &i.attrs,
+        syn::Item::Type(i) => &i.attrs,
+        syn::Item::Union(i) => &i.attrs,
+        syn::Item::Use(i) => &i.attrs,
+        syn::Item::Static(i) => &i.attrs,
+        syn::Item::TraitAlias(i) => &i.attrs,
+        syn::Item::Verbatim(_) => &[],
+        x => panic!("Unknown item type: {:?}", x),
+    }
+}
+
+fn item_visibility_ident(item: &syn::Item) -> Option<(&syn::Visibility, &syn::Ident)> {
+    match item {
+        syn::Item::Const(i) => Some((&i.vis, &i.ident)),
+        syn::Item::Enum(i) => Some((&i.vis, &i.ident)),
+        syn::Item::Fn(i) => Some((&i.vis, &i.sig.ident)),
+        syn::Item::Struct(i) => Some((&i.vis, &i.ident)),
+        syn::Item::Trait(i) => Some((&i.vis, &i.ident)),
+        syn::Item::Type(i) => Some((&i.vis, &i.ident)),
+        syn::Item::Union(i) => Some((&i.vis, &i.ident)),
+        _ => None,
+    }
 }
 
 impl VisitMut for GenFinalPubVisitor {
@@ -172,11 +203,6 @@ impl VisitMut for GenFinalPubVisitor {
     }
 
     fn visit_item_use_mut(&mut self, i: &mut syn::ItemUse) {
-        if is_runtime(&i.attrs) {
-            i.attrs.insert(0, parse_quote!(#[cfg(false)]));
-            return;
-        }
-
         i.vis = parse_quote!(pub);
         syn::visit_mut::visit_item_use_mut(self, i);
     }
@@ -212,31 +238,6 @@ impl VisitMut for GenFinalPubVisitor {
     }
 
     fn visit_item_mod_mut(&mut self, i: &mut syn::ItemMod) {
-        let is_test_mod = i
-            .attrs
-            .iter()
-            .any(|a| a.to_token_stream().to_string() == "# [cfg (test)]");
-
-        if is_runtime(&i.attrs) {
-            // no quoted code depends on this module, so we do not need to copy it
-            i.attrs.insert(0, parse_quote!(#[cfg(false)]));
-            return;
-        }
-
-        if is_test_mod {
-            i.attrs
-                .retain(|a| a.to_token_stream().to_string() != "# [cfg (test)]");
-
-            if let Some(feature) = &self.test_mode_feature {
-                i.attrs.insert(0, parse_quote!(#[cfg(feature = #feature)]));
-            } else {
-                // if test mode is not enabled, there are no quoted snippets behind #[cfg(test)],
-                // so no #[cfg(test)] modules will ever be reachable
-                i.attrs.insert(0, parse_quote!(#[cfg(false)]));
-                // Continue (?)
-            }
-        }
-
         let old_mod = self.current_mod.clone();
         let i_ident = &i.ident;
         self.current_mod = self
@@ -252,24 +253,7 @@ impl VisitMut for GenFinalPubVisitor {
     }
 
     fn visit_item_fn_mut(&mut self, i: &mut syn::ItemFn) {
-        let is_ctor = i
-            .attrs
-            .iter()
-            .any(|a| a.path().to_token_stream().to_string() == "ctor :: ctor");
-
-        let is_test = i.attrs.iter().any(|a| {
-            a.path().to_token_stream().to_string() == "test"
-                || a.path().to_token_stream().to_string() == "tokio :: test"
-        });
-
-        if is_runtime(&i.attrs) || is_ctor || is_test {
-            // no quoted code depends on this module, so we do not need to copy it
-            i.attrs.insert(0, parse_quote!(#[cfg(false)]));
-            return;
-        }
-
         i.vis = parse_quote!(pub);
-
         syn::visit_mut::visit_item_fn_mut(self, i);
     }
 
@@ -277,110 +261,81 @@ impl VisitMut for GenFinalPubVisitor {
         // TODO(shadaj): warn if a pub struct or enum has private fields
         // and is not marked for runtime
         let cur_path = self.current_mod.as_ref().unwrap();
+
+        // Remove if marked with `#[cfg(stageleft_runtime)]`
+        if is_runtime(item_attributes(i)) {
+            *i = syn::Item::Verbatim(Default::default());
+            return;
+        }
+
         match i {
-            syn::Item::Struct(e) => {
-                if is_runtime(&e.attrs) {
-                    e.attrs.insert(0, parse_quote!(#[cfg(false)]));
-                    return;
-                }
-
-                if matches!(e.vis, Visibility::Public(_)) {
-                    let e_name = &e.ident;
-                    let e_attrs = get_cfg_attrs(&e.attrs);
-                    *i = parse_quote!(#(#e_attrs)* pub use #cur_path::#e_name;);
-                    return;
-                }
-            }
-            syn::Item::Enum(e) => {
-                if is_runtime(&e.attrs) {
-                    e.attrs.insert(0, parse_quote!(#[cfg(false)]));
-                    return;
-                }
-
-                if matches!(e.vis, Visibility::Public(_)) {
-                    let e_name = &e.ident;
-                    let e_attrs = get_cfg_attrs(&e.attrs);
-                    *i = parse_quote!(#(#e_attrs)* pub use #cur_path::#e_name;);
-                    return;
-                }
-            }
-            syn::Item::Trait(e) => {
-                if is_runtime(&e.attrs) {
-                    e.attrs.insert(0, parse_quote!(#[cfg(false)]));
-                    return;
-                }
-
-                if matches!(e.vis, Visibility::Public(_)) {
-                    let e_name = &e.ident;
-                    let e_attrs = get_cfg_attrs(&e.attrs);
-                    *i = parse_quote!(#(#e_attrs)* pub use #cur_path::#e_name;);
-                    return;
-                }
-            }
-            syn::Item::Static(e) => {
-                if is_runtime(&e.attrs) {
-                    e.attrs.insert(0, parse_quote!(#[cfg(false)]));
-                    return;
-                }
-
-                if matches!(e.vis, Visibility::Public(_)) {
-                    let e_name = &e.ident;
-                    let e_attrs = get_cfg_attrs(&e.attrs);
-                    *i = parse_quote!(#(#e_attrs)* pub use #cur_path::#e_name;);
-                    return;
-                }
-            }
-            syn::Item::Const(e) => {
-                if is_runtime(&e.attrs) {
-                    e.attrs.insert(0, parse_quote!(#[cfg(false)]));
-                    return;
-                }
-
-                if matches!(e.vis, Visibility::Public(_)) {
-                    let e_name = &e.ident;
-                    let e_attrs = get_cfg_attrs(&e.attrs);
-                    *i = parse_quote!(#(#e_attrs)* pub use #cur_path::#e_name;);
-                    return;
-                }
-            }
             syn::Item::Macro(m) => {
-                match (get_stageleft_export_items(&m.attrs), is_runtime(&m.attrs)) {
-                    (Some(_exported_items), true) => {
-                        *i = parse_quote!(
-                            ::core::compile_error!("Cannot have both `#[cfg(stageleft_runtime)]` (which disables the macro) and `#[stageleft::export]` (which re-exports macro-generated items).");
-                        );
-                        return;
-                    }
-                    (Some(exported_items), false) => {
-                        *i = parse_quote! {
-                            pub use #cur_path::{ #( #exported_items ),* };
-                        };
-                        return;
-                    }
-                    (None, true) => {
-                        // TODO(mingwei): Remove the item entirely in the future (remove-in-place is hard with VisitMut).
-                        m.attrs.insert(0, parse_quote!(#[cfg(false)]));
-                        // Continue
-                    }
-                    (None, false) => {
-                        // Continue
-                    }
+                if let Some(exported_items) = get_stageleft_export_items(&m.attrs) {
+                    *i = parse_quote! {
+                        pub use #cur_path::{ #( #exported_items ),* };
+                    };
+                    return;
                 }
 
                 if m.attrs
                     .iter()
                     .any(|a| a.to_token_stream().to_string() == "# [macro_export]")
                 {
-                    m.attrs.insert(0, parse_quote!(#[cfg(false)]));
+                    // Re-export macro at top-level later.
                     self.all_macros.push(m.ident.as_ref().unwrap().clone());
+                    *i = syn::Item::Verbatim(Default::default());
                 }
             }
-            syn::Item::Impl(e) => {
+            syn::Item::Impl(_e) => {
                 // TODO(shadaj): emit impls if the struct is private
                 // currently, we just skip all impls
-                e.attrs.insert(0, parse_quote!(#[cfg(false)]));
+                *i = syn::Item::Verbatim(Default::default());
+            }
+            syn::Item::Mod(m) => {
+                let is_test_mod = m
+                    .attrs
+                    .iter()
+                    .any(|a| a.to_token_stream().to_string() == "# [cfg (test)]");
+
+                if is_test_mod {
+                    m.attrs
+                        .retain(|a| a.to_token_stream().to_string() != "# [cfg (test)]");
+
+                    if let Some(feature) = &self.test_mode_feature {
+                        m.attrs.insert(0, parse_quote!(#[cfg(feature = #feature)]));
+                    } else {
+                        // if test mode is not enabled, there are no quoted snippets behind #[cfg(test)],
+                        // so no #[cfg(test)] modules will ever be reachable
+                        *i = syn::Item::Verbatim(Default::default());
+                        return;
+                    }
+                }
+            }
+            syn::Item::Fn(f) => {
+                let is_ctor = f
+                    .attrs
+                    .iter()
+                    .any(|a| a.path().to_token_stream().to_string() == "ctor :: ctor");
+
+                let is_test = f.attrs.iter().any(|a| {
+                    a.path().to_token_stream().to_string() == "test"
+                        || a.path().to_token_stream().to_string() == "tokio :: test"
+                });
+
+                if is_ctor || is_test {
+                    // no quoted code depends on this module, so we do not need to copy it
+                    *i = syn::Item::Verbatim(Default::default());
+                    return;
+                }
             }
             _ => {}
+        }
+
+        // If a named item has pub visibility, simply re-export from original crate.
+        if let Some((Visibility::Public(_), name_ident)) = item_visibility_ident(i) {
+            let cfg_attrs = get_cfg_attrs(item_attributes(i));
+            *i = parse_quote!(#(#cfg_attrs)* pub use #cur_path::#name_ident;);
+            return;
         }
 
         syn::visit_mut::visit_item_mut(self, i);
@@ -398,36 +353,6 @@ impl VisitMut for GenFinalPubVisitor {
         });
 
         syn::visit_mut::visit_file_mut(self, i);
-    }
-}
-
-struct RemoveCfgFalseVisitor;
-impl VisitMut for RemoveCfgFalseVisitor {
-    fn visit_item_mut(&mut self, i: &mut syn::Item) {
-        let has_cfg_false = match i {
-            syn::Item::Const(item_const) => has_cfg_false(&item_const.attrs),
-            syn::Item::Enum(item_enum) => has_cfg_false(&item_enum.attrs),
-            syn::Item::ExternCrate(item_extern_crate) => has_cfg_false(&item_extern_crate.attrs),
-            syn::Item::Fn(item_fn) => has_cfg_false(&item_fn.attrs),
-            syn::Item::ForeignMod(item_foreign_mod) => has_cfg_false(&item_foreign_mod.attrs),
-            syn::Item::Impl(item_impl) => has_cfg_false(&item_impl.attrs),
-            syn::Item::Macro(item_macro) => has_cfg_false(&item_macro.attrs),
-            syn::Item::Mod(item_mod) => has_cfg_false(&item_mod.attrs),
-            syn::Item::Static(item_static) => has_cfg_false(&item_static.attrs),
-            syn::Item::Struct(item_struct) => has_cfg_false(&item_struct.attrs),
-            syn::Item::Trait(item_trait) => has_cfg_false(&item_trait.attrs),
-            syn::Item::TraitAlias(item_trait_alias) => has_cfg_false(&item_trait_alias.attrs),
-            syn::Item::Type(item_type) => has_cfg_false(&item_type.attrs),
-            syn::Item::Union(item_union) => has_cfg_false(&item_union.attrs),
-            syn::Item::Use(item_use) => has_cfg_false(&item_use.attrs),
-            syn::Item::Verbatim(_) => false,
-            _ => panic!("Unhandled item variant: {:?}", i),
-        };
-        if has_cfg_false {
-            *i = syn::Item::Verbatim(Default::default());
-        } else {
-            syn::visit_mut::visit_item_mut(self, i);
-        }
     }
 }
 
@@ -517,9 +442,6 @@ fn gen_staged_mod(
             .items
             .push(parse_quote!(pub use #orig_crate_ident::#exported_macro;));
     }
-
-    // In a second pass, remove any items marked `#[cfg(false)]` from the source, to minimize size.
-    RemoveCfgFalseVisitor.visit_file_mut(&mut flow_lib_pub);
 
     flow_lib_pub
 }
