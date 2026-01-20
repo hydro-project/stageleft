@@ -1,0 +1,15 @@
+---
+source: stageleft_test_no_entry/tests/codegen_snapshot.rs
+expression: "include_str!(concat!(env!(\"OUT_DIR\"), stageleft::PATH_SEPARATOR!(),\n\"lib_pub.rs\"))"
+---
+pub use crate::MyKey;
+/// Test that `stageleft::export` prevents splitbrain of `MyKey` type.
+#[allow(dead_code)]
+pub fn splitbrain(st: SplitbrainStruct) {
+    let _key: MyKey = st.my_key;
+}
+pub use crate::SplitbrainStruct;
+
+pub mod pub_mod {
+
+}
