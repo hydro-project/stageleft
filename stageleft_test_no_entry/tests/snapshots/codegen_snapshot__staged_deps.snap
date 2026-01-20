@@ -1,0 +1,37 @@
+---
+source: stageleft_test_no_entry/tests/codegen_snapshot.rs
+assertion_line: 12
+expression: "include_str!(concat!(env!(\"OUT_DIR\"), stageleft::PATH_SEPARATOR!(),\n\"staged_deps.rs\"))"
+---
+pub mod __deps {
+    pub use stageleft;
+    pub use slotmap;
+    #[stageleft::internal::ctor::ctor(crate_path = stageleft::internal::ctor)]
+    fn __init() {
+        stageleft::internal::add_deps_reexport(
+            vec!["stageleft"],
+            vec![
+                option_env!("STAGELEFT_FINAL_CRATE_NAME")
+                    .unwrap_or(env!("CARGO_PKG_NAME"))
+                    .replace("-", "_"),
+                "__staged".to_string(),
+                "__deps".to_string(),
+                "stageleft".to_string(),
+            ],
+        );
+        stageleft::internal::add_deps_reexport(
+            vec!["slotmap"],
+            vec![
+                option_env!("STAGELEFT_FINAL_CRATE_NAME")
+                    .unwrap_or(env!("CARGO_PKG_NAME"))
+                    .replace("-", "_"),
+                "__staged".to_string(),
+                "__deps".to_string(),
+                "slotmap".to_string(),
+            ],
+        );
+        stageleft::internal::add_crate_with_staged(
+            env!("CARGO_PKG_NAME").replace("-", "_"),
+        );
+    }
+}

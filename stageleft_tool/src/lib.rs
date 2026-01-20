@@ -101,7 +101,7 @@ pub fn gen_macro(staged_path: &Path, crate_name: &str) {
     );
 }
 
-struct GenFinalPubVistor {
+struct GenFinalPubVisitor {
     current_mod: Option<syn::Path>,
     all_macros: Vec<syn::Ident>,
     test_mode_feature: Option<String>,
@@ -114,6 +114,10 @@ fn get_cfg_attrs(attrs: &[syn::Attribute]) -> impl Iterator<Item = &syn::Attribu
 fn is_runtime(attrs: &[syn::Attribute]) -> bool {
     get_cfg_attrs(attrs)
         .any(|attr| attr.to_token_stream().to_string() == "# [cfg (stageleft_runtime)]")
+}
+
+fn has_cfg_false(attrs: &[syn::Attribute]) -> bool {
+    get_cfg_attrs(attrs).any(|attr| attr.to_token_stream().to_string() == "# [cfg (false)]")
 }
 
 fn get_stageleft_export_items(attrs: &[syn::Attribute]) -> Option<Vec<syn::Ident>> {
@@ -132,7 +136,7 @@ fn get_stageleft_export_items(attrs: &[syn::Attribute]) -> Option<Vec<syn::Ident
         })
 }
 
-impl VisitMut for GenFinalPubVistor {
+impl VisitMut for GenFinalPubVisitor {
     fn visit_item_enum_mut(&mut self, i: &mut syn::ItemEnum) {
         i.vis = parse_quote!(pub);
         syn::visit_mut::visit_item_enum_mut(self, i);
@@ -169,10 +173,7 @@ impl VisitMut for GenFinalPubVistor {
 
     fn visit_item_use_mut(&mut self, i: &mut syn::ItemUse) {
         if is_runtime(&i.attrs) {
-            i.attrs.insert(
-                0,
-                parse_quote!(#[cfg(all(stageleft_macro, not(stageleft_macro)))]),
-            );
+            i.attrs.insert(0, parse_quote!(#[cfg(false)]));
             return;
         }
 
@@ -218,13 +219,11 @@ impl VisitMut for GenFinalPubVistor {
 
         if is_runtime(&i.attrs) {
             // no quoted code depends on this module, so we do not need to copy it
-            i.attrs.insert(
-                0,
-                parse_quote!(#[cfg(all(stageleft_macro, not(stageleft_macro)))]),
-            );
-
+            i.attrs.insert(0, parse_quote!(#[cfg(false)]));
             return;
-        } else if is_test_mod {
+        }
+
+        if is_test_mod {
             i.attrs
                 .retain(|a| a.to_token_stream().to_string() != "# [cfg (test)]");
 
@@ -233,10 +232,8 @@ impl VisitMut for GenFinalPubVistor {
             } else {
                 // if test mode is not enabled, there are no quoted snippets behind #[cfg(test)],
                 // so no #[cfg(test)] modules will ever be reachable
-                i.attrs.insert(
-                    0,
-                    parse_quote!(#[cfg(all(stageleft_macro, not(stageleft_macro)))]),
-                );
+                i.attrs.insert(0, parse_quote!(#[cfg(false)]));
+                // Continue (?)
             }
         }
 
@@ -267,15 +264,11 @@ impl VisitMut for GenFinalPubVistor {
 
         if is_runtime(&i.attrs) || is_ctor || is_test {
             // no quoted code depends on this module, so we do not need to copy it
-            i.attrs.insert(
-                0,
-                parse_quote!(#[cfg(all(stageleft_macro, not(stageleft_macro)))]),
-            );
-
+            i.attrs.insert(0, parse_quote!(#[cfg(false)]));
             return;
-        } else {
-            i.vis = parse_quote!(pub);
         }
+
+        i.vis = parse_quote!(pub);
 
         syn::visit_mut::visit_item_fn_mut(self, i);
     }
@@ -284,13 +277,10 @@ impl VisitMut for GenFinalPubVistor {
         // TODO(shadaj): warn if a pub struct or enum has private fields
         // and is not marked for runtime
         let cur_path = self.current_mod.as_ref().unwrap();
-        {
-            if let syn::Item::Struct(e) = i {
+        match i {
+            syn::Item::Struct(e) => {
                 if is_runtime(&e.attrs) {
-                    e.attrs.insert(
-                        0,
-                        parse_quote!(#[cfg(all(stageleft_macro, not(stageleft_macro)))]),
-                    );
+                    e.attrs.insert(0, parse_quote!(#[cfg(false)]));
                     return;
                 }
 
@@ -300,12 +290,10 @@ impl VisitMut for GenFinalPubVistor {
                     *i = parse_quote!(#(#e_attrs)* pub use #cur_path::#e_name;);
                     return;
                 }
-            } else if let syn::Item::Enum(e) = i {
+            }
+            syn::Item::Enum(e) => {
                 if is_runtime(&e.attrs) {
-                    e.attrs.insert(
-                        0,
-                        parse_quote!(#[cfg(all(stageleft_macro, not(stageleft_macro)))]),
-                    );
+                    e.attrs.insert(0, parse_quote!(#[cfg(false)]));
                     return;
                 }
 
@@ -315,12 +303,10 @@ impl VisitMut for GenFinalPubVistor {
                     *i = parse_quote!(#(#e_attrs)* pub use #cur_path::#e_name;);
                     return;
                 }
-            } else if let syn::Item::Trait(e) = i {
+            }
+            syn::Item::Trait(e) => {
                 if is_runtime(&e.attrs) {
-                    e.attrs.insert(
-                        0,
-                        parse_quote!(#[cfg(all(stageleft_macro, not(stageleft_macro)))]),
-                    );
+                    e.attrs.insert(0, parse_quote!(#[cfg(false)]));
                     return;
                 }
 
@@ -330,12 +316,10 @@ impl VisitMut for GenFinalPubVistor {
                     *i = parse_quote!(#(#e_attrs)* pub use #cur_path::#e_name;);
                     return;
                 }
-            } else if let syn::Item::Static(e) = i {
+            }
+            syn::Item::Static(e) => {
                 if is_runtime(&e.attrs) {
-                    e.attrs.insert(
-                        0,
-                        parse_quote!(#[cfg(all(stageleft_macro, not(stageleft_macro)))]),
-                    );
+                    e.attrs.insert(0, parse_quote!(#[cfg(false)]));
                     return;
                 }
 
@@ -345,12 +329,10 @@ impl VisitMut for GenFinalPubVistor {
                     *i = parse_quote!(#(#e_attrs)* pub use #cur_path::#e_name;);
                     return;
                 }
-            } else if let syn::Item::Const(e) = i {
+            }
+            syn::Item::Const(e) => {
                 if is_runtime(&e.attrs) {
-                    e.attrs.insert(
-                        0,
-                        parse_quote!(#[cfg(all(stageleft_macro, not(stageleft_macro)))]),
-                    );
+                    e.attrs.insert(0, parse_quote!(#[cfg(false)]));
                     return;
                 }
 
@@ -360,7 +342,8 @@ impl VisitMut for GenFinalPubVistor {
                     *i = parse_quote!(#(#e_attrs)* pub use #cur_path::#e_name;);
                     return;
                 }
-            } else if let syn::Item::Macro(m) = i {
+            }
+            syn::Item::Macro(m) => {
                 match (get_stageleft_export_items(&m.attrs), is_runtime(&m.attrs)) {
                     (Some(_exported_items), true) => {
                         *i = parse_quote!(
@@ -376,10 +359,7 @@ impl VisitMut for GenFinalPubVistor {
                     }
                     (None, true) => {
                         // TODO(mingwei): Remove the item entirely in the future (remove-in-place is hard with VisitMut).
-                        m.attrs.insert(
-                            0,
-                            parse_quote!(#[cfg(all(stageleft_macro, not(stageleft_macro)))]),
-                        );
+                        m.attrs.insert(0, parse_quote!(#[cfg(false)]));
                         // Continue
                     }
                     (None, false) => {
@@ -391,20 +371,16 @@ impl VisitMut for GenFinalPubVistor {
                     .iter()
                     .any(|a| a.to_token_stream().to_string() == "# [macro_export]")
                 {
-                    m.attrs.insert(
-                        0,
-                        parse_quote!(#[cfg(all(stageleft_macro, not(stageleft_macro)))]),
-                    );
+                    m.attrs.insert(0, parse_quote!(#[cfg(false)]));
                     self.all_macros.push(m.ident.as_ref().unwrap().clone());
                 }
-            } else if let syn::Item::Impl(e) = i {
+            }
+            syn::Item::Impl(e) => {
                 // TODO(shadaj): emit impls if the struct is private
                 // currently, we just skip all impls
-                *i = parse_quote!(
-                    #[cfg(all(stageleft_macro, not(stageleft_macro)))]
-                    #e
-                );
+                e.attrs.insert(0, parse_quote!(#[cfg(false)]));
             }
+            _ => {}
         }
 
         syn::visit_mut::visit_item_mut(self, i);
@@ -422,6 +398,36 @@ impl VisitMut for GenFinalPubVistor {
         });
 
         syn::visit_mut::visit_file_mut(self, i);
+    }
+}
+
+struct RemoveCfgFalseVisitor;
+impl VisitMut for RemoveCfgFalseVisitor {
+    fn visit_item_mut(&mut self, i: &mut syn::Item) {
+        let has_cfg_false = match i {
+            syn::Item::Const(item_const) => has_cfg_false(&item_const.attrs),
+            syn::Item::Enum(item_enum) => has_cfg_false(&item_enum.attrs),
+            syn::Item::ExternCrate(item_extern_crate) => has_cfg_false(&item_extern_crate.attrs),
+            syn::Item::Fn(item_fn) => has_cfg_false(&item_fn.attrs),
+            syn::Item::ForeignMod(item_foreign_mod) => has_cfg_false(&item_foreign_mod.attrs),
+            syn::Item::Impl(item_impl) => has_cfg_false(&item_impl.attrs),
+            syn::Item::Macro(item_macro) => has_cfg_false(&item_macro.attrs),
+            syn::Item::Mod(item_mod) => has_cfg_false(&item_mod.attrs),
+            syn::Item::Static(item_static) => has_cfg_false(&item_static.attrs),
+            syn::Item::Struct(item_struct) => has_cfg_false(&item_struct.attrs),
+            syn::Item::Trait(item_trait) => has_cfg_false(&item_trait.attrs),
+            syn::Item::TraitAlias(item_trait_alias) => has_cfg_false(&item_trait_alias.attrs),
+            syn::Item::Type(item_type) => has_cfg_false(&item_type.attrs),
+            syn::Item::Union(item_union) => has_cfg_false(&item_union.attrs),
+            syn::Item::Use(item_use) => has_cfg_false(&item_use.attrs),
+            syn::Item::Verbatim(_) => false,
+            _ => panic!("Unhandled item variant: {:?}", i),
+        };
+        if has_cfg_false {
+            *i = syn::Item::Verbatim(Default::default());
+        } else {
+            syn::visit_mut::visit_item_mut(self, i);
+        }
     }
 }
 
@@ -496,7 +502,7 @@ fn gen_staged_mod(
 ) -> syn::File {
     let mut flow_lib_pub = syn_inline_mod::parse_and_inline_modules(lib_path);
 
-    let mut final_pub_visitor = GenFinalPubVistor {
+    let mut final_pub_visitor = GenFinalPubVisitor {
         current_mod: Some(parse_quote!(#orig_crate_ident)),
         test_mode_feature,
         all_macros: vec![],
@@ -511,6 +517,9 @@ fn gen_staged_mod(
             .items
             .push(parse_quote!(pub use #orig_crate_ident::#exported_macro;));
     }
+
+    // In a second pass, remove any items marked `#[cfg(false)]` from the source, to minimize size.
+    RemoveCfgFalseVisitor.visit_file_mut(&mut flow_lib_pub);
 
     flow_lib_pub
 }

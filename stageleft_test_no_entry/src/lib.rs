@@ -17,3 +17,13 @@ pub struct SplitbrainStruct {
     /// This stays as regular `MyKey` (equiv. to `crate::MyKey`).
     my_key: MyKey,
 }
+
+#[cfg(stageleft_runtime)]
+#[expect(dead_code)]
+struct ThisShouldBeRemoved;
+
+pub mod pub_mod {
+    #[cfg(stageleft_runtime)]
+    #[expect(dead_code)]
+    struct ThisShouldAlsoBeRemoved;
+}

@@ -455,6 +455,7 @@ dependencies = [
 name = "stageleft_test_no_entry"
 version = "0.0.0"
 dependencies = [
+ "insta",
  "slotmap",
  "stageleft",
  "stageleft_tool",
