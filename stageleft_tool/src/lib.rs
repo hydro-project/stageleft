@@ -24,8 +24,8 @@ impl<'a> Visit<'a> for GenMacroVistor {
         syn::visit::visit_item_mod(self, i);
 
         // Pop
-        let _ = self.current_mod.segments.pop().unwrap();
-        let _ = self.current_mod.segments.pop_punct().unwrap(); // Remove trailing `::`.
+        self.current_mod.segments.pop().unwrap();
+        self.current_mod.segments.pop_punct().unwrap(); // Remove trailing `::`.
     }
 
     fn visit_item_fn(&mut self, i: &'a syn::ItemFn) {
@@ -261,9 +261,9 @@ impl VisitMut for GenFinalPubVisitor {
         syn::visit_mut::visit_item_mod_mut(self, i);
 
         // Pop
-        let _ = self.current_mod.segments.pop().unwrap();
-        let _ = self.current_mod.segments.pop_punct().unwrap(); // Remove trailing `::`.
-        let _ = self.stack_is_pub.pop().unwrap();
+        self.current_mod.segments.pop().unwrap();
+        self.current_mod.segments.pop_punct().unwrap(); // Remove trailing `::`.
+        self.stack_is_pub.pop().unwrap();
 
         // Make module pub.
         i.vis = parse_quote!(pub);
