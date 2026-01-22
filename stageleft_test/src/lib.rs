@@ -18,6 +18,11 @@ mod private {
     ) -> crate::private::SomeType {
         123
     }
+
+    mod extra_private {
+        #[allow(dead_code)]
+        pub struct PubInsideExtraPrivate;
+    }
 }
 
 #[stageleft::entry]

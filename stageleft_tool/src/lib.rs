@@ -18,13 +18,14 @@ struct GenMacroVistor {
 // marks everything as pub(crate) because proc-macros cannot actually export anything
 impl<'a> Visit<'a> for GenMacroVistor {
     fn visit_item_mod(&mut self, i: &'a syn::ItemMod) {
-        let old_mod = self.current_mod.clone();
-        let i_ident = &i.ident;
-        self.current_mod = parse_quote!(#old_mod::#i_ident);
+        // Push
+        self.current_mod.segments.push(i.ident.clone().into());
 
         syn::visit::visit_item_mod(self, i);
 
-        self.current_mod = old_mod;
+        // Pop
+        let _ = self.current_mod.segments.pop().unwrap();
+        let _ = self.current_mod.segments.pop_punct().unwrap(); // Remove trailing `::`.
     }
 
     fn visit_item_fn(&mut self, i: &'a syn::ItemFn) {
@@ -102,9 +103,21 @@ pub fn gen_macro(staged_path: &Path, crate_name: &str) {
 }
 
 struct GenFinalPubVisitor {
-    current_mod: Option<syn::Path>,
+    /// The current module path, starting with `crate`.
+    current_mod: syn::Path,
+    /// If the `current_mod` is pub _all the way up_, starting with `true`.
+    stack_is_pub: Vec<bool>,
+
     all_macros: Vec<syn::Ident>,
     test_mode_feature: Option<String>,
+}
+impl GenFinalPubVisitor {
+    fn can_access_current(&self) -> bool {
+        // The final innermost module in the stack is allowed to be `false`.
+        // e.g. `true, true, true, false` is OK.
+        // See https://doc.rust-lang.org/reference/visibility-and-privacy.html#r-vis.access 1.
+        self.stack_is_pub[self.stack_is_pub.len().saturating_sub(2)]
+    }
 }
 
 fn get_cfg_attrs(attrs: &[syn::Attribute]) -> impl Iterator<Item = &syn::Attribute> + '_ {
@@ -159,8 +172,10 @@ fn item_visibility_ident(item: &syn::Item) -> Option<(&syn::Visibility, &syn::Id
         syn::Item::Const(i) => Some((&i.vis, &i.ident)),
         syn::Item::Enum(i) => Some((&i.vis, &i.ident)),
         syn::Item::Fn(i) => Some((&i.vis, &i.sig.ident)),
+        syn::Item::Static(i) => Some((&i.vis, &i.ident)),
         syn::Item::Struct(i) => Some((&i.vis, &i.ident)),
         syn::Item::Trait(i) => Some((&i.vis, &i.ident)),
+        syn::Item::TraitAlias(i) => Some((&i.vis, &i.ident)),
         syn::Item::Type(i) => Some((&i.vis, &i.ident)),
         syn::Item::Union(i) => Some((&i.vis, &i.ident)),
         _ => None,
@@ -238,18 +253,20 @@ impl VisitMut for GenFinalPubVisitor {
     }
 
     fn visit_item_mod_mut(&mut self, i: &mut syn::ItemMod) {
-        let old_mod = self.current_mod.clone();
-        let i_ident = &i.ident;
-        self.current_mod = self
-            .current_mod
-            .as_ref()
-            .map(|old_mod| parse_quote!(#old_mod::#i_ident));
-
-        i.vis = parse_quote!(pub);
+        // Push
+        self.current_mod.segments.push(i.ident.clone().into());
+        self.stack_is_pub
+            .push(*self.stack_is_pub.last().unwrap() && matches!(i.vis, Visibility::Public(_)));
 
         syn::visit_mut::visit_item_mod_mut(self, i);
 
-        self.current_mod = old_mod;
+        // Pop
+        let _ = self.current_mod.segments.pop().unwrap();
+        let _ = self.current_mod.segments.pop_punct().unwrap(); // Remove trailing `::`.
+        let _ = self.stack_is_pub.pop().unwrap();
+
+        // Make module pub.
+        i.vis = parse_quote!(pub);
     }
 
     fn visit_item_fn_mut(&mut self, i: &mut syn::ItemFn) {
@@ -260,7 +277,7 @@ impl VisitMut for GenFinalPubVisitor {
     fn visit_item_mut(&mut self, i: &mut syn::Item) {
         // TODO(shadaj): warn if a pub struct or enum has private fields
         // and is not marked for runtime
-        let cur_path = self.current_mod.as_ref().unwrap();
+        let cur_path = &self.current_mod;
 
         // Remove if marked with `#[cfg(stageleft_runtime)]`
         if is_runtime(item_attributes(i)) {
@@ -270,6 +287,7 @@ impl VisitMut for GenFinalPubVisitor {
 
         match i {
             syn::Item::Macro(m) => {
+                // TODO(mingwei): Handle if `can_access_current()` is false
                 if let Some(exported_items) = get_stageleft_export_items(&m.attrs) {
                     *i = parse_quote! {
                         pub use #cur_path::{ #( #exported_items ),* };
@@ -284,12 +302,14 @@ impl VisitMut for GenFinalPubVisitor {
                     // Re-export macro at top-level later.
                     self.all_macros.push(m.ident.as_ref().unwrap().clone());
                     *i = syn::Item::Verbatim(Default::default());
+                    return;
                 }
             }
             syn::Item::Impl(_e) => {
-                // TODO(shadaj): emit impls if the struct is private
+                // TODO(shadaj): emit impls if the **struct** is private
                 // currently, we just skip all impls
                 *i = syn::Item::Verbatim(Default::default());
+                return;
             }
             syn::Item::Mod(m) => {
                 let is_test_mod = m
@@ -331,8 +351,10 @@ impl VisitMut for GenFinalPubVisitor {
             _ => {}
         }
 
-        // If a named item has pub visibility, simply re-export from original crate.
-        if let Some((Visibility::Public(_), name_ident)) = item_visibility_ident(i) {
+        // If a named item can be accessed (mod can be accessed and item is pub), simply re-export from original crate.
+        if self.can_access_current()
+            && let Some((Visibility::Public(_), name_ident)) = item_visibility_ident(i)
+        {
             let cfg_attrs = get_cfg_attrs(item_attributes(i));
             *i = parse_quote!(#(#cfg_attrs)* pub use #cur_path::#name_ident;);
             return;
@@ -428,7 +450,8 @@ fn gen_staged_mod(
     let mut flow_lib_pub = syn_inline_mod::parse_and_inline_modules(lib_path);
 
     let mut final_pub_visitor = GenFinalPubVisitor {
-        current_mod: Some(parse_quote!(#orig_crate_ident)),
+        current_mod: parse_quote!(#orig_crate_ident),
+        stack_is_pub: vec![true],
         test_mode_feature,
         all_macros: vec![],
     };
