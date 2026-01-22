@@ -22,8 +22,39 @@ pub struct SplitbrainStruct {
 #[expect(dead_code)]
 struct ThisShouldBeRemoved;
 
-pub mod pub_mod {
+#[allow(dead_code)]
+pub mod public {
     #[cfg(stageleft_runtime)]
-    #[expect(dead_code)]
     struct ThisShouldAlsoBeRemoved;
+
+    pub fn f() {}
+    fn g() {}
+
+    #[expect(clippy::module_inception)]
+    pub mod public {
+        pub fn f() {}
+        fn g() {}
+    }
+
+    mod private {
+        pub fn f() {}
+        fn g() {}
+    }
+}
+
+#[allow(dead_code)]
+mod private {
+    pub fn f() {}
+    fn g() {}
+
+    pub mod public {
+        pub fn f() {}
+        fn g() {}
+    }
+
+    #[expect(clippy::module_inception)]
+    mod private {
+        pub fn f() {}
+        fn g() {}
+    }
 }
