@@ -18,13 +18,14 @@ struct GenMacroVistor {
 // marks everything as pub(crate) because proc-macros cannot actually export anything
 impl<'a> Visit<'a> for GenMacroVistor {
     fn visit_item_mod(&mut self, i: &'a syn::ItemMod) {
-        let old_mod = self.current_mod.clone();
-        let i_ident = &i.ident;
-        self.current_mod = parse_quote!(#old_mod::#i_ident);
+        // Push
+        self.current_mod.segments.push(i.ident.clone().into());
 
         syn::visit::visit_item_mod(self, i);
 
-        self.current_mod = old_mod;
+        // Pop
+        self.current_mod.segments.pop().unwrap();
+        self.current_mod.segments.pop_punct().unwrap(); // Remove trailing `::`.
     }
 
     fn visit_item_fn(&mut self, i: &'a syn::ItemFn) {
@@ -102,9 +103,47 @@ pub fn gen_macro(staged_path: &Path, crate_name: &str) {
 }
 
 struct GenFinalPubVisitor {
-    current_mod: Option<syn::Path>,
-    all_macros: Vec<syn::Ident>,
+    /// The current module path, starting with `crate`.
+    current_mod: syn::Path,
+    /// Stack of if each segment of `current_mod` is pub.
+    stack_is_pub: Vec<bool>,
+
+    /// If `Some("FEATURE")`, `#[cfg(test)]` modules will be gated with `#[cfg(feature = "FEATURE")]` instead of being
+    /// fully removed.
     test_mode_feature: Option<String>,
+
+    /// Whether the staged crate will be included in a separate crate (instead of the original crate as is usual). If
+    /// true, then disables `pub use` [re-exporting from non-`pub` ancestor modules](https://doc.rust-lang.org/reference/visibility-and-privacy.html#r-vis.access).
+    is_staged_separate: bool,
+
+    /// All `#[macro_export]` declarative macros encountered, to be re-exported at the top `__staged` module due to the
+    /// strange way `#[macro_export]` works.
+    all_macros: Vec<syn::Ident>,
+}
+impl GenFinalPubVisitor {
+    pub fn new(
+        orig_crate_ident: syn::Path,
+        test_mode_feature: Option<String>,
+        is_staged_separate: bool,
+    ) -> Self {
+        Self {
+            current_mod: orig_crate_ident,
+            stack_is_pub: Vec::new(),
+            test_mode_feature,
+            is_staged_separate,
+            all_macros: Vec::new(),
+        }
+    }
+
+    /// If items in the current module path ([`Self::current_mod`]) are accessible, for `pub use` re-exporting.
+    fn can_access_current(&self) -> bool {
+        self.stack_is_pub
+            .iter()
+            // If the staged crate is included in the original crate, the innermost module may be private due to the
+            // ancestor rule: https://doc.rust-lang.org/reference/visibility-and-privacy.html#r-vis.access
+            .skip(if self.is_staged_separate { 0 } else { 1 })
+            .all(|&x| x)
+    }
 }
 
 fn get_cfg_attrs(attrs: &[syn::Attribute]) -> impl Iterator<Item = &syn::Attribute> + '_ {
@@ -159,8 +198,10 @@ fn item_visibility_ident(item: &syn::Item) -> Option<(&syn::Visibility, &syn::Id
         syn::Item::Const(i) => Some((&i.vis, &i.ident)),
         syn::Item::Enum(i) => Some((&i.vis, &i.ident)),
         syn::Item::Fn(i) => Some((&i.vis, &i.sig.ident)),
+        syn::Item::Static(i) => Some((&i.vis, &i.ident)),
         syn::Item::Struct(i) => Some((&i.vis, &i.ident)),
         syn::Item::Trait(i) => Some((&i.vis, &i.ident)),
+        syn::Item::TraitAlias(i) => Some((&i.vis, &i.ident)),
         syn::Item::Type(i) => Some((&i.vis, &i.ident)),
         syn::Item::Union(i) => Some((&i.vis, &i.ident)),
         _ => None,
@@ -238,18 +279,20 @@ impl VisitMut for GenFinalPubVisitor {
     }
 
     fn visit_item_mod_mut(&mut self, i: &mut syn::ItemMod) {
-        let old_mod = self.current_mod.clone();
-        let i_ident = &i.ident;
-        self.current_mod = self
-            .current_mod
-            .as_ref()
-            .map(|old_mod| parse_quote!(#old_mod::#i_ident));
-
-        i.vis = parse_quote!(pub);
+        // Push
+        self.current_mod.segments.push(i.ident.clone().into());
+        self.stack_is_pub
+            .push(matches!(i.vis, Visibility::Public(_)));
 
         syn::visit_mut::visit_item_mod_mut(self, i);
 
-        self.current_mod = old_mod;
+        // Pop
+        self.current_mod.segments.pop().unwrap();
+        self.current_mod.segments.pop_punct().unwrap(); // Remove trailing `::`.
+        self.stack_is_pub.pop().unwrap();
+
+        // Make module pub.
+        i.vis = parse_quote!(pub);
     }
 
     fn visit_item_fn_mut(&mut self, i: &mut syn::ItemFn) {
@@ -260,7 +303,7 @@ impl VisitMut for GenFinalPubVisitor {
     fn visit_item_mut(&mut self, i: &mut syn::Item) {
         // TODO(shadaj): warn if a pub struct or enum has private fields
         // and is not marked for runtime
-        let cur_path = self.current_mod.as_ref().unwrap();
+        let cur_path = &self.current_mod;
 
         // Remove if marked with `#[cfg(stageleft_runtime)]`
         if is_runtime(item_attributes(i)) {
@@ -270,6 +313,7 @@ impl VisitMut for GenFinalPubVisitor {
 
         match i {
             syn::Item::Macro(m) => {
+                // TODO(mingwei): Handle if `can_access_current()` is false
                 if let Some(exported_items) = get_stageleft_export_items(&m.attrs) {
                     *i = parse_quote! {
                         pub use #cur_path::{ #( #exported_items ),* };
@@ -284,12 +328,14 @@ impl VisitMut for GenFinalPubVisitor {
                     // Re-export macro at top-level later.
                     self.all_macros.push(m.ident.as_ref().unwrap().clone());
                     *i = syn::Item::Verbatim(Default::default());
+                    return;
                 }
             }
             syn::Item::Impl(_e) => {
-                // TODO(shadaj): emit impls if the struct is private
+                // TODO(shadaj): emit impls if the **struct** is private
                 // currently, we just skip all impls
                 *i = syn::Item::Verbatim(Default::default());
+                return;
             }
             syn::Item::Mod(m) => {
                 let is_test_mod = m
@@ -331,8 +377,10 @@ impl VisitMut for GenFinalPubVisitor {
             _ => {}
         }
 
-        // If a named item has pub visibility, simply re-export from original crate.
-        if let Some((Visibility::Public(_), name_ident)) = item_visibility_ident(i) {
+        // If a named item can be accessed (mod can be accessed and item is pub), simply re-export from original crate.
+        if self.can_access_current()
+            && let Some((Visibility::Public(_), name_ident)) = item_visibility_ident(i)
+        {
             let cfg_attrs = get_cfg_attrs(item_attributes(i));
             *i = parse_quote!(#(#cfg_attrs)* pub use #cur_path::#name_ident;);
             return;
@@ -420,18 +468,33 @@ fn gen_deps_module(stageleft_name: syn::Ident, manifest_path: &Path) -> syn::Ite
 
 /// Generates the contents of `mod __staged`, which contains a copy of the crate's code but with
 /// all APIs made public so they can be resolved when quoted code is spliced.
+///
+/// # Arguments
+/// * `lib_path` - path to the root Rust file, usually to `lib.rs`.
+/// * `orig_crate_path` - Rust module path to the staged crate. Usually `crate`, but may be the staged crate name if
+///   the entry and staged crate/target are different.
+/// * `is_staged_separate` - Whether the staged crate will be included in a separate crate (instead of the original
+///   crate as is usual). If true, then disables `pub use` [re-exporting from non-`pub` ancestor modules](https://doc.rust-lang.org/reference/visibility-and-privacy.html#r-vis.access).
+/// * `test_mode_feature` - If `Some("FEATURE")`, `#[cfg(test)]` modules will be gated with
+///   `#[cfg(feature = "FEATURE")]` instead of being fully removed.
 fn gen_staged_mod(
     lib_path: &Path,
-    orig_crate_ident: syn::Path,
+    orig_crate_path: syn::Path,
     test_mode_feature: Option<String>,
+    is_staged_separate: bool,
 ) -> syn::File {
+    assert!(
+        !orig_crate_path.segments.trailing_punct(),
+        "`orig_crate_path` may not have trailing `::`"
+    );
+
     let mut flow_lib_pub = syn_inline_mod::parse_and_inline_modules(lib_path);
 
-    let mut final_pub_visitor = GenFinalPubVisitor {
-        current_mod: Some(parse_quote!(#orig_crate_ident)),
+    let mut final_pub_visitor = GenFinalPubVisitor::new(
+        orig_crate_path.clone(),
         test_mode_feature,
-        all_macros: vec![],
-    };
+        is_staged_separate,
+    );
     final_pub_visitor.visit_file_mut(&mut flow_lib_pub);
 
     // macros exported with `#[macro_export]` are placed at the top-level of the crate,
@@ -440,7 +503,7 @@ fn gen_staged_mod(
     for exported_macro in final_pub_visitor.all_macros {
         flow_lib_pub
             .items
-            .push(parse_quote!(pub use #orig_crate_ident::#exported_macro;));
+            .push(parse_quote!(pub use #orig_crate_path::#exported_macro;));
     }
 
     flow_lib_pub
@@ -449,14 +512,23 @@ fn gen_staged_mod(
 /// Generates the contents for `__staged` when it will be emitted in "trybuild mode", which means that
 /// it is included inline next to the spliced code that uses it, with the original crate available as
 /// a dependency.
+///
+/// # Arguments
+/// * `lib_path` - path to the root Rust file, usually to `lib.rs`.
+/// * `manifest_path` - path to the package `Cargo.toml`.
+/// * `orig_crate_path` - Rust module path to the staged crate. Usually `crate`, but may be the staged crate name if
+///   the entry and staged crate/target are different.
+/// * `test_mode_feature` - If `Some("FEATURE")`, `#[cfg(test)]` modules will be gated with
+///   `#[cfg(feature = "FEATURE")]` instead of being fully removed.
 pub fn gen_staged_trybuild(
     lib_path: &Path,
     manifest_path: &Path,
-    orig_crate_name: String,
+    orig_crate_path: &str,
     test_mode_feature: Option<String>,
 ) -> syn::File {
-    let crate_name = syn::Ident::new(&orig_crate_name, Span::call_site());
-    let mut flow_lib_pub = gen_staged_mod(lib_path, parse_quote!(#crate_name), test_mode_feature);
+    let orig_crate_path = syn::parse_str(orig_crate_path)
+        .expect("Failed to parse `orig_crate_path` as `crate`, crate name, or module path.");
+    let mut flow_lib_pub = gen_staged_mod(lib_path, orig_crate_path, test_mode_feature, true);
 
     let deps_mod = gen_deps_module(parse_quote!(stageleft), manifest_path);
 
@@ -484,6 +556,7 @@ pub fn gen_staged_pub() {
             .unwrap_or_else(|| Path::new("src/lib.rs")),
         parse_quote!(crate),
         None,
+        false,
     );
 
     fs::write(

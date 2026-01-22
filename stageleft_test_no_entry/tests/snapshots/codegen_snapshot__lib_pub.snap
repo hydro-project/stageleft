@@ -10,6 +10,32 @@ pub fn splitbrain(st: SplitbrainStruct) {
 }
 pub use crate::SplitbrainStruct;
 
-pub mod pub_mod {
+#[allow(dead_code)]
+pub mod public {
 
+    pub use crate::public::f;
+    pub fn g() {}
+    #[expect(clippy::module_inception)]
+    pub mod public {
+        pub use crate::public::public::f;
+        pub fn g() {}
+    }
+    pub mod private {
+        pub fn f() {}
+        pub fn g() {}
+    }
+}
+#[allow(dead_code)]
+pub mod private {
+    pub use crate::private::f;
+    pub fn g() {}
+    pub mod public {
+        pub use crate::private::public::f;
+        pub fn g() {}
+    }
+    #[expect(clippy::module_inception)]
+    pub mod private {
+        pub fn f() {}
+        pub fn g() {}
+    }
 }
