@@ -113,10 +113,11 @@ struct GenFinalPubVisitor {
 }
 impl GenFinalPubVisitor {
     fn can_access_current(&self) -> bool {
-        // The final innermost module in the stack is allowed to be `false`.
-        // e.g. `true, true, true, false` is OK.
-        // See https://doc.rust-lang.org/reference/visibility-and-privacy.html#r-vis.access 1.
-        self.stack_is_pub[self.stack_is_pub.len().saturating_sub(2)]
+        // // The final innermost module in the stack is allowed to be `false`.
+        // // e.g. `true, true, true, false` is OK.
+        // // See https://doc.rust-lang.org/reference/visibility-and-privacy.html#r-vis.access 1.
+        // self.stack_is_pub[self.stack_is_pub.len().saturating_sub(2)]
+        *self.stack_is_pub.last().unwrap()
     }
 }
 
