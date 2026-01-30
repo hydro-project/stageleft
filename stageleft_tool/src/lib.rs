@@ -5,9 +5,9 @@ use std::{env, fs};
 use proc_macro2::Span;
 use quote::ToTokens;
 use sha2::{Digest, Sha256};
+use syn::parse_quote;
 use syn::visit::Visit;
 use syn::visit_mut::VisitMut;
-use syn::{UsePath, Visibility, parse_quote};
 use toml_edit::DocumentMut;
 
 struct GenMacroVistor {
@@ -38,7 +38,7 @@ impl<'a> Visit<'a> for GenMacroVistor {
             let cur_path = &self.current_mod;
             let mut i_cloned = i.clone();
             i_cloned.attrs = vec![];
-            i_cloned.vis = Visibility::Inherited; // normalize pub
+            i_cloned.vis = syn::Visibility::Inherited; // normalize pub
 
             let contents = i_cloned
                 .to_token_stream()
@@ -70,9 +70,9 @@ pub fn gen_macro(staged_path: &Path, crate_name: &str) {
     let mut out_file: syn::File = parse_quote!();
 
     for (hash, exported_from) in visitor.exported_macros {
-        let underscored_path = syn::Ident::new(&("macro_".to_string() + &hash), Span::call_site());
+        let underscored_path = syn::Ident::new(&("macro_".to_owned() + &hash), Span::call_site());
         let underscored_path_impl =
-            syn::Ident::new(&("macro_".to_string() + &hash + "_impl"), Span::call_site());
+            syn::Ident::new(&("macro_".to_owned() + &hash + "_impl"), Span::call_site());
         let exported_from_parsed: syn::Path = syn::parse_str(&exported_from).unwrap();
 
         let proc_macro_wrapper: syn::ItemFn = parse_quote!(
@@ -248,9 +248,9 @@ impl VisitMut for GenFinalPubVisitor {
         syn::visit_mut::visit_item_use_mut(self, i);
     }
 
-    fn visit_use_path_mut(&mut self, i: &mut UsePath) {
+    fn visit_use_path_mut(&mut self, i: &mut syn::UsePath) {
         if i.ident == "crate" {
-            *i.tree = syn::UseTree::Path(UsePath {
+            *i.tree = syn::UseTree::Path(syn::UsePath {
                 ident: parse_quote!(__staged),
                 colon2_token: Default::default(),
                 tree: i.tree.clone(),
@@ -282,7 +282,7 @@ impl VisitMut for GenFinalPubVisitor {
         // Push
         self.current_mod.segments.push(i.ident.clone().into());
         self.stack_is_pub
-            .push(matches!(i.vis, Visibility::Public(_)));
+            .push(matches!(i.vis, syn::Visibility::Public(_)));
 
         syn::visit_mut::visit_item_mod_mut(self, i);
 
@@ -379,7 +379,7 @@ impl VisitMut for GenFinalPubVisitor {
 
         // If a named item can be accessed (mod can be accessed and item is pub), simply re-export from original crate.
         if self.can_access_current()
-            && let Some((Visibility::Public(_), name_ident)) = item_visibility_ident(i)
+            && let Some((syn::Visibility::Public(_), name_ident)) = item_visibility_ident(i)
         {
             let cfg_attrs = get_cfg_attrs(item_attributes(i));
             *i = parse_quote!(#(#cfg_attrs)* pub use #cur_path::#name_ident;);
@@ -437,16 +437,17 @@ fn gen_deps_module(stageleft_name: syn::Ident, manifest_path: &Path) -> syn::Ite
     let deps_reexported_runtime = all_crate_names
         .iter()
         .map(|(name, original_crate_name)| {
-            let original_crate_name_or_alias = original_crate_name.as_ref().unwrap_or(name);
+            let original_crate_name_or_alias = original_crate_name.as_deref().unwrap_or(name);
             parse_quote! {
                 #stageleft_name::internal::add_deps_reexport(
                     vec![#original_crate_name_or_alias],
                     vec![
-                        option_env!("STAGELEFT_FINAL_CRATE_NAME").unwrap_or(env!("CARGO_PKG_NAME"))
+                        option_env!("STAGELEFT_FINAL_CRATE_NAME")
+                            .unwrap_or(env!("CARGO_PKG_NAME"))
                             .replace("-", "_"),
-                        "__staged".to_string(),
-                        "__deps".to_string(),
-                        #name.to_string()
+                        ::std::borrow::ToOwned::to_owned("__staged"),
+                        ::std::borrow::ToOwned::to_owned("__deps"),
+                        ::std::borrow::ToOwned::to_owned(#name),
                     ]
                 );
             }

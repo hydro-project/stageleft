@@ -22,7 +22,7 @@ fn needing_properties<'a>(f: impl IntoQuotedMut<'a, i32, (), PropertiesType<Stri
     let (_, _props) = f.splice_typed_ctx_props(&());
 }
 
-#[allow(unused, reason = "compilation test")]
+#[expect(unused, reason = "compilation test")]
 fn test_properties() {
     needing_properties(q!(123, example_property = true));
 }

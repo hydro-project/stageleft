@@ -35,9 +35,9 @@ thread_local! {
     pub(crate) static MACRO_TO_CRATE: std::cell::RefCell<Option<(String, String)>> = const { std::cell::RefCell::new(None) };
 }
 
-pub fn set_macro_to_crate(macro_name: &str, crate_name: &str) {
+pub fn set_macro_to_crate(macro_name: impl Into<String>, crate_name: impl Into<String>) {
     MACRO_TO_CRATE.with(|cell| {
-        *cell.borrow_mut() = Some((macro_name.to_string(), crate_name.to_string()));
+        *cell.borrow_mut() = Some((macro_name.into(), crate_name.into()));
     });
 }
 

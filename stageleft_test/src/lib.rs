@@ -1,4 +1,4 @@
-#![cfg_attr(stageleft_macro, allow(dead_code))]
+#![cfg_attr(stageleft_macro, allow(dead_code, reason = "test code"))]
 stageleft::stageleft_crate!(stageleft_test_macro);
 
 use stageleft::{BorrowBounds, IntoQuotedOnce, Quoted, RuntimeData, q};
@@ -12,7 +12,7 @@ static GLOBAL_VAR: i32 = 42;
 mod private {
     type SomeType = i32;
 
-    #[allow(dead_code)]
+    #[expect(dead_code, unused_qualifications, reason = "test code")]
     fn function_using_absolute_type_path(
         _xyz: Option<crate::private::SomeType>,
     ) -> crate::private::SomeType {
@@ -20,7 +20,7 @@ mod private {
     }
 
     mod extra_private {
-        #[allow(dead_code)]
+        #[expect(dead_code, reason = "test code")]
         pub struct PubInsideExtraPrivate;
     }
 }

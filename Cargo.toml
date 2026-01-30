@@ -15,3 +15,21 @@ resolver = "2"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/hydro-project/stageleft"
+
+[workspace.lints.rust]
+impl_trait_overcaptures = "warn"
+missing_unsafe_on_extern = "deny"
+unsafe_attr_outside_unsafe = "deny"
+unused_qualifications = "warn"
+
+[workspace.lints.clippy]
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+explicit_into_iter_loop = "warn"
+let_and_return = "allow"
+redundant_clone = "warn"
+self_named_module_files = "warn"
+str_to_string = "warn"
+try_err = "warn"
+uninlined_format_args = "allow"
+unused_async = "warn"

@@ -67,7 +67,7 @@ fn gen_use_paths(
                 .collect::<Vec<_>>();
 
             if is_rooted {
-                let full_path = quote!(#(#prefix::)*#name_ident).to_string();
+                let full_path = quote!(#( #prefix:: )* #name_ident).to_string();
 
                 into.push(quote! {
                     #[allow(non_upper_case_globals, non_snake_case)]
@@ -86,7 +86,7 @@ fn gen_use_paths(
             } else if !prefix.is_empty() {
                 let first = prefix.first().unwrap();
                 let prefix_suffix = prefix.iter().skip(1);
-                let suffix_full_path = quote!(#(#prefix_suffix::)*#name_ident).to_string();
+                let suffix_full_path = quote!(#( #prefix_suffix:: )* #name_ident).to_string();
 
                 into.push(quote! {
                     #[allow(non_upper_case_globals, non_snake_case)]
@@ -285,7 +285,7 @@ pub fn entry(
         .filter(|c| c.is_alphanumeric())
         .collect::<String>();
 
-    let input_hash = "macro_".to_string() + &format!("{:X}", Sha256::digest(input_contents));
+    let input_hash = format!("macro_{:X}", Sha256::digest(input_contents));
     let input_hash_ident = syn::Ident::new(&input_hash, Span::call_site());
     let input_hash_impl_ident = syn::Ident::new(&(input_hash + "_impl"), Span::call_site());
 

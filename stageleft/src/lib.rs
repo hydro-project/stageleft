@@ -82,10 +82,11 @@ macro_rules! stageleft_no_entry_crate {
     () => {
         #[doc(hidden)]
         #[allow(
-            unused,
             ambiguous_glob_reexports,
-            unexpected_cfgs,
             mismatched_lifetime_syntaxes,
+            unexpected_cfgs,
+            unfulfilled_lint_expectations,
+            unused,
             clippy::suspicious_else_formatting,
             clippy::type_complexity,
             reason = "generated code"

@@ -1,8 +1,8 @@
 use proc_macro2::{Span, TokenStream};
 use quote::{ToTokens, quote};
+use syn::Token;
 use syn::parse::{Parse, ParseStream};
 use syn::visit_mut::VisitMut;
-use syn::{Expr, Ident, Token};
 
 use self::free_variable::FreeVariableVisitor;
 
@@ -11,9 +11,9 @@ mod free_variable;
 
 /// A property annotation like `commutative = Kani` or `idempotent = ManualProof(/** something */)`
 struct PropertyAnnotation {
-    name: Ident,
+    name: syn::Ident,
     _eq: Token![=],
-    value: Expr,
+    value: syn::Expr,
 }
 
 impl Parse for PropertyAnnotation {
@@ -28,13 +28,13 @@ impl Parse for PropertyAnnotation {
 
 /// Input to q! macro: expression followed by optional property annotations
 struct QInput {
-    expr: Expr,
+    expr: syn::Expr,
     properties: Vec<PropertyAnnotation>,
 }
 
 impl Parse for QInput {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let expr: Expr = input.parse()?;
+        let expr: syn::Expr = input.parse()?;
         let mut properties = Vec::new();
 
         while input.peek(Token![,]) {
@@ -49,7 +49,7 @@ impl Parse for QInput {
     }
 }
 
-pub fn q_impl(root: TokenStream, toks: proc_macro2::TokenStream) -> TokenStream {
+pub fn q_impl(root: TokenStream, toks: TokenStream) -> TokenStream {
     let parsed = syn::parse2::<QInput>(toks.clone());
 
     let (expr_toks, properties) = match parsed {
@@ -106,7 +106,7 @@ pub fn q_impl(root: TokenStream, toks: proc_macro2::TokenStream) -> TokenStream 
     // necessary to ensure proper hover in Rust Analyzer
     let expr_without_spans = if std::env::var("RUST_ANALYZER_INTERNALS_DO_NOT_USE").is_ok() {
         // for unknown reasons, Rust Analyzer completions break if we emit the input as a string as well :(
-        "".to_string()
+        "".to_owned()
     } else {
         rewritten_toks.to_string()
     };
