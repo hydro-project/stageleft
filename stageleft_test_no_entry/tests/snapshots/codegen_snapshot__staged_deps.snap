@@ -10,23 +10,23 @@ pub mod __deps {
         stageleft::internal::add_deps_reexport(
             vec!["stageleft"],
             vec![
-                &*option_env!("STAGELEFT_FINAL_CRATE_NAME")
+                option_env!("STAGELEFT_FINAL_CRATE_NAME")
                     .unwrap_or(env!("CARGO_PKG_NAME"))
                     .replace("-", "_"),
-                "__staged",
-                "__deps",
-                "stageleft",
+                ::std::borrow::ToOwned::to_owned("__staged"),
+                ::std::borrow::ToOwned::to_owned("__deps"),
+                ::std::borrow::ToOwned::to_owned("stageleft"),
             ],
         );
         stageleft::internal::add_deps_reexport(
             vec!["slotmap"],
             vec![
-                &*option_env!("STAGELEFT_FINAL_CRATE_NAME")
+                option_env!("STAGELEFT_FINAL_CRATE_NAME")
                     .unwrap_or(env!("CARGO_PKG_NAME"))
                     .replace("-", "_"),
-                "__staged",
-                "__deps",
-                "slotmap",
+                ::std::borrow::ToOwned::to_owned("__staged"),
+                ::std::borrow::ToOwned::to_owned("__deps"),
+                ::std::borrow::ToOwned::to_owned("slotmap"),
             ],
         );
         stageleft::internal::add_crate_with_staged(

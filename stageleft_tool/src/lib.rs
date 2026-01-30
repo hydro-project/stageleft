@@ -442,12 +442,12 @@ fn gen_deps_module(stageleft_name: syn::Ident, manifest_path: &Path) -> syn::Ite
                 #stageleft_name::internal::add_deps_reexport(
                     vec![#original_crate_name_or_alias],
                     vec![
-                        &*option_env!("STAGELEFT_FINAL_CRATE_NAME")
+                        option_env!("STAGELEFT_FINAL_CRATE_NAME")
                             .unwrap_or(env!("CARGO_PKG_NAME"))
                             .replace("-", "_"),
-                        "__staged",
-                        "__deps",
-                        #name,
+                        ::std::borrow::ToOwned::to_owned("__staged"),
+                        ::std::borrow::ToOwned::to_owned("__deps"),
+                        ::std::borrow::ToOwned::to_owned(#name),
                     ]
                 );
             }
