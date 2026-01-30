@@ -4,18 +4,18 @@ expression: "include_str!(concat!(env!(\"OUT_DIR\"), stageleft::PATH_SEPARATOR!(
 ---
 pub use crate::MyKey;
 /// Test that `stageleft::export` prevents splitbrain of `MyKey` type.
-#[allow(dead_code)]
+#[expect(dead_code, reason = "test code")]
 pub fn splitbrain(st: SplitbrainStruct) {
     let _key: MyKey = st.my_key;
 }
 pub use crate::SplitbrainStruct;
 
-#[allow(dead_code)]
+#[expect(dead_code, reason = "test code")]
 pub mod public {
 
     pub use crate::public::f;
     pub fn g() {}
-    #[expect(clippy::module_inception)]
+    #[expect(clippy::module_inception, reason = "test code")]
     pub mod public {
         pub use crate::public::public::f;
         pub fn g() {}
@@ -25,7 +25,7 @@ pub mod public {
         pub fn g() {}
     }
 }
-#[allow(dead_code)]
+#[expect(dead_code, reason = "test code")]
 pub mod private {
     pub use crate::private::f;
     pub fn g() {}
@@ -33,7 +33,7 @@ pub mod private {
         pub use crate::private::public::f;
         pub fn g() {}
     }
-    #[expect(clippy::module_inception)]
+    #[expect(clippy::module_inception, reason = "test code")]
     pub mod private {
         pub fn f() {}
         pub fn g() {}

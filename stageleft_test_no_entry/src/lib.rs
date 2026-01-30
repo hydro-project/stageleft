@@ -7,7 +7,7 @@ slotmap::new_key_type! {
 }
 
 /// Test that `stageleft::export` prevents splitbrain of `MyKey` type.
-#[allow(dead_code)]
+#[expect(dead_code, reason = "test code")]
 fn splitbrain(st: SplitbrainStruct) {
     // This gets turned into `crate::__staged::MyKey`
     let _key: MyKey = st.my_key;
@@ -19,10 +19,10 @@ pub struct SplitbrainStruct {
 }
 
 #[cfg(stageleft_runtime)]
-#[expect(dead_code)]
+#[expect(dead_code, reason = "test code")]
 struct ThisShouldBeRemoved;
 
-#[allow(dead_code)]
+#[expect(dead_code, reason = "test code")]
 pub mod public {
     #[cfg(stageleft_runtime)]
     struct ThisShouldAlsoBeRemoved;
@@ -30,7 +30,7 @@ pub mod public {
     pub fn f() {}
     fn g() {}
 
-    #[expect(clippy::module_inception)]
+    #[expect(clippy::module_inception, reason = "test code")]
     pub mod public {
         pub fn f() {}
         fn g() {}
@@ -42,7 +42,7 @@ pub mod public {
     }
 }
 
-#[allow(dead_code)]
+#[expect(dead_code, reason = "test code")]
 mod private {
     pub fn f() {}
     fn g() {}
@@ -52,7 +52,7 @@ mod private {
         fn g() {}
     }
 
-    #[expect(clippy::module_inception)]
+    #[expect(clippy::module_inception, reason = "test code")]
     mod private {
         pub fn f() {}
         fn g() {}
