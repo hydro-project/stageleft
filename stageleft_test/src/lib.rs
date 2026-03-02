@@ -78,6 +78,11 @@ pub fn crate_paths<'a>(_ctx: BorrowBounds<'a>) -> impl Quoted<'a, bool> {
 }
 
 #[stageleft::entry]
+pub fn self_path_at_root<'a>(_ctx: BorrowBounds<'a>) -> impl Quoted<'a, bool> {
+    q!(self::my_top_level_function())
+}
+
+#[stageleft::entry]
 fn captured_closure<'a>(_ctx: BorrowBounds<'a>) -> impl Quoted<'a, bool> {
     let closure = q!(|| true);
     q!({
@@ -112,6 +117,11 @@ mod tests {
     #[test]
     fn test_crate_paths() {
         assert!(crate_paths!());
+    }
+
+    #[test]
+    fn test_self_path_at_root() {
+        assert!(self_path_at_root!());
     }
 
     #[test]
