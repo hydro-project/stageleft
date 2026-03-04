@@ -13,12 +13,12 @@ workspace = true
 release = false
 
 [dependencies]
-stageleft = { path = "../stageleft", version = "^0.13.1" }
+stageleft = { path = "../stageleft", version = "^0.13.2" }
 
 slotmap = "1.0.0"
 
 [build-dependencies]
-stageleft_tool = { path = "../stageleft_tool", version = "^0.13.1" }
+stageleft_tool = { path = "../stageleft_tool", version = "^0.13.2" }
 
 [dev-dependencies]
 insta = "1.39"
