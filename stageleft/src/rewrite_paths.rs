@@ -18,7 +18,7 @@ impl VisitMut for RewritePaths {
                 .chain(path_tail)
                 .cloned()
                 .collect();
-        } else if let Some(module_path) = &self.module_path {
+        } else {
             let mut path_skip_count = 0;
             let mut module_skip_end_count = 0;
 
@@ -34,6 +34,7 @@ impl VisitMut for RewritePaths {
             }
 
             if path_skip_count > 0 {
+                let module_path = self.module_path.as_ref().unwrap_or(&self.crate_root_path);
                 let path_tail = path.segments.iter().skip(path_skip_count);
                 path.segments = module_path
                     .segments
