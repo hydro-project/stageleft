@@ -41,6 +41,24 @@ static PRIVATE_REEXPORTS: ReexportsSet = LazyLock::new(|| {
             vec!["std".into(), "collections".into(), "hash_set".into()],
         ),
         (
+            vec![
+                "std".into(),
+                "collections".into(),
+                "btree".into(),
+                "map".into(),
+            ],
+            vec!["std".into(), "collections".into(), "btree_map".into()],
+        ),
+        (
+            vec![
+                "std".into(),
+                "collections".into(),
+                "btree".into(),
+                "set".into(),
+            ],
+            vec!["std".into(), "collections".into(), "btree_set".into()],
+        ),
+        (
             vec!["std".into(), "vec".into(), "into_iter".into()],
             vec!["std".into(), "vec".into()],
         ),
