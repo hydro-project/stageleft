@@ -17,6 +17,15 @@ stageleft = { path = "../stageleft", version = "^0.13.2" }
 
 slotmap = "1.0.0"
 
+# optional dep with implicit feature (feature "once_cell" auto-created)
+once_cell = { version = "1.20", optional = true }
+
+# optional dep gated by explicit feature via dep: syntax
+cfg-if = { version = "1.0", optional = true }
+
+[features]
+my_cfg_feature = ["dep:cfg-if"]
+
 [build-dependencies]
 stageleft_tool = { path = "../stageleft_tool", version = "^0.13.2" }
 

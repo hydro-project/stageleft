@@ -429,6 +429,7 @@ dependencies = [
 name = "stageleft_test"
 version = "0.0.0"
 dependencies = [
+ "once_cell",
  "rand",
  "stageleft",
  "stageleft_test_macro",
@@ -446,6 +447,7 @@ dependencies = [
 name = "stageleft_test_macro"
 version = "0.0.0"
 dependencies = [
+ "once_cell",
  "rand",
  "stageleft",
  "stageleft_tool",
@@ -455,7 +457,9 @@ dependencies = [
 name = "stageleft_test_no_entry"
 version = "0.0.0"
 dependencies = [
+ "cfg-if",
  "insta",
+ "once_cell",
  "slotmap",
  "stageleft",
  "stageleft_tool",

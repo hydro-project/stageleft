@@ -12,6 +12,7 @@ release = false
 
 [features]
 test_feature = []
+once_cell_feature = ["dep:once_cell"]
 
 [lib]
 proc-macro = true
@@ -21,6 +22,8 @@ path = "../stageleft_test/src/lib.rs"
 stageleft = { path = "../stageleft", version = "^0.13.2" }
 
 rand_alias = { package = "rand", version = "0.9.0", features = ["thread_rng"] }
+
+once_cell = { version = "1.20", optional = true }
 
 [build-dependencies]
 stageleft_tool = { path = "../stageleft_tool", version = "^0.13.2" }

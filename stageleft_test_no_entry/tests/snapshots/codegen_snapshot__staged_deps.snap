@@ -5,30 +5,66 @@ expression: "include_str!(concat!(env!(\"OUT_DIR\"), stageleft::PATH_SEPARATOR!(
 pub mod __deps {
     pub use stageleft;
     pub use slotmap;
+    #[cfg(any(feature = "once_cell"))]
+    pub use once_cell;
+    #[cfg(any(feature = "my_cfg_feature"))]
+    pub use cfg_if;
     #[stageleft::internal::ctor::ctor(crate_path = stageleft::internal::ctor)]
     fn __init() {
-        stageleft::internal::add_deps_reexport(
-            vec!["stageleft"],
-            vec![
-                option_env!("STAGELEFT_FINAL_CRATE_NAME")
-                    .unwrap_or(env!("CARGO_PKG_NAME"))
-                    .replace("-", "_"),
-                ::std::borrow::ToOwned::to_owned("__staged"),
-                ::std::borrow::ToOwned::to_owned("__deps"),
-                ::std::borrow::ToOwned::to_owned("stageleft"),
-            ],
-        );
-        stageleft::internal::add_deps_reexport(
-            vec!["slotmap"],
-            vec![
-                option_env!("STAGELEFT_FINAL_CRATE_NAME")
-                    .unwrap_or(env!("CARGO_PKG_NAME"))
-                    .replace("-", "_"),
-                ::std::borrow::ToOwned::to_owned("__staged"),
-                ::std::borrow::ToOwned::to_owned("__deps"),
-                ::std::borrow::ToOwned::to_owned("slotmap"),
-            ],
-        );
+        {
+            stageleft::internal::add_deps_reexport(
+                vec!["stageleft"],
+                vec![
+                    option_env!("STAGELEFT_FINAL_CRATE_NAME")
+                        .unwrap_or(env!("CARGO_PKG_NAME"))
+                        .replace("-", "_"),
+                    ::std::borrow::ToOwned::to_owned("__staged"),
+                    ::std::borrow::ToOwned::to_owned("__deps"),
+                    ::std::borrow::ToOwned::to_owned("stageleft"),
+                ],
+            );
+        }
+        {
+            stageleft::internal::add_deps_reexport(
+                vec!["slotmap"],
+                vec![
+                    option_env!("STAGELEFT_FINAL_CRATE_NAME")
+                        .unwrap_or(env!("CARGO_PKG_NAME"))
+                        .replace("-", "_"),
+                    ::std::borrow::ToOwned::to_owned("__staged"),
+                    ::std::borrow::ToOwned::to_owned("__deps"),
+                    ::std::borrow::ToOwned::to_owned("slotmap"),
+                ],
+            );
+        }
+        #[cfg(any(feature = "once_cell"))]
+        {
+            stageleft::internal::add_deps_reexport(
+                vec!["once_cell"],
+                vec![
+                    option_env!("STAGELEFT_FINAL_CRATE_NAME")
+                        .unwrap_or(env!("CARGO_PKG_NAME"))
+                        .replace("-", "_"),
+                    ::std::borrow::ToOwned::to_owned("__staged"),
+                    ::std::borrow::ToOwned::to_owned("__deps"),
+                    ::std::borrow::ToOwned::to_owned("once_cell"),
+                ],
+            );
+        }
+        #[cfg(any(feature = "my_cfg_feature"))]
+        {
+            stageleft::internal::add_deps_reexport(
+                vec!["cfg_if"],
+                vec![
+                    option_env!("STAGELEFT_FINAL_CRATE_NAME")
+                        .unwrap_or(env!("CARGO_PKG_NAME"))
+                        .replace("-", "_"),
+                    ::std::borrow::ToOwned::to_owned("__staged"),
+                    ::std::borrow::ToOwned::to_owned("__deps"),
+                    ::std::borrow::ToOwned::to_owned("cfg_if"),
+                ],
+            );
+        }
         stageleft::internal::add_crate_with_staged(
             env!("CARGO_PKG_NAME").replace("-", "_"),
         );

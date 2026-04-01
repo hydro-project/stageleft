@@ -11,4 +11,4 @@ workspace = true
 release = false
 
 [dependencies]
-stageleft_test = { path = "../stageleft_test" }
+stageleft_test = { path = "../stageleft_test", features = ["once_cell_feature"] }
