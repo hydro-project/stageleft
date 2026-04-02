@@ -91,6 +91,14 @@ fn captured_closure<'a>(_ctx: BorrowBounds<'a>) -> impl Quoted<'a, bool> {
     })
 }
 
+#[cfg(feature = "once_cell_feature")]
+#[stageleft::entry]
+pub fn using_once_cell(_ctx: BorrowBounds<'_>) -> impl Quoted<'_, i32> {
+    q!(*once_cell::sync::Lazy::force(&once_cell::sync::Lazy::new(
+        || 42
+    )))
+}
+
 #[cfg(stageleft_runtime)]
 #[cfg(test)]
 mod tests {
@@ -154,5 +162,12 @@ mod tests {
     fn test_submodule_public_struct() {
         let result: submodule::PublicStruct = submodule::public_struct!();
         assert_eq!(result.a, 1);
+    }
+
+    #[cfg(feature = "once_cell_feature")]
+    #[test]
+    fn test_using_once_cell() {
+        let result = using_once_cell!();
+        assert_eq!(result, 42);
     }
 }

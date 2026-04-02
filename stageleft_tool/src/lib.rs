@@ -404,31 +404,77 @@ impl VisitMut for GenFinalPubVisitor {
     }
 }
 
+/// For an optional dependency, compute the list of features that enable it.
+/// If no feature references `dep:<name>`, Cargo creates an implicit feature with the dep's name.
+/// If one or more features reference `dep:<name>`, those are the gating features.
+fn optional_dep_features(dep_name: &str, features_table: Option<&toml_edit::Table>) -> Vec<String> {
+    let dep_prefix = format!("dep:{dep_name}");
+    let dep_prefix_slash = format!("{dep_prefix}/");
+    let explicit: Vec<String> = features_table
+        .into_iter()
+        .flat_map(|t| t.iter())
+        .filter(|(_, vals)| {
+            vals.as_array().is_some_and(|arr| {
+                arr.iter().any(|v| {
+                    v.as_str()
+                        .is_some_and(|s| s == dep_prefix || s.starts_with(&dep_prefix_slash))
+                })
+            })
+        })
+        .map(|(feat, _)| feat.to_owned())
+        .collect();
+    if explicit.is_empty() {
+        vec![dep_name.to_owned()]
+    } else {
+        explicit
+    }
+}
+
+/// Build a `#[cfg(...)]` attribute for the given feature list, or `None` if not optional.
+fn cfg_attr_for_features(features: &[String]) -> Option<syn::Attribute> {
+    if features.is_empty() {
+        return None;
+    }
+    let preds = features
+        .iter()
+        .map(|f| -> syn::Meta { parse_quote!(feature = #f) });
+    Some(parse_quote!(#[cfg(any(#(#preds),*))]))
+}
+
 fn gen_deps_module(stageleft_name: syn::Ident, manifest_path: &Path) -> syn::ItemMod {
     // based on proc-macro-crate
     let toml_parsed = fs::read_to_string(manifest_path)
         .unwrap()
         .parse::<DocumentMut>()
         .unwrap();
+    let features_table = toml_parsed.get("features").and_then(|v| v.as_table());
     let all_crate_names = toml_parsed["dependencies"]
         .as_table()
         .unwrap()
         .iter()
-        .filter(|(_, v)| !v.get("optional").and_then(|o| o.as_bool()).unwrap_or(false))
         .map(|(name, v)| {
+            let is_optional = v.get("optional").and_then(|o| o.as_bool()).unwrap_or(false);
+            let gating_features = if is_optional {
+                optional_dep_features(name, features_table)
+            } else {
+                vec![]
+            };
             (
                 name.replace('-', "_"),
                 v.get("package")
                     .map(|v| v.as_str().unwrap().replace("-", "_")),
+                gating_features,
             )
         })
         .collect::<Vec<_>>();
 
     let deps_reexported = all_crate_names
         .iter()
-        .map(|(name, _)| {
+        .map(|(name, _, gating_features)| {
             let name_ident = syn::Ident::new(name, Span::call_site());
+            let cfg = cfg_attr_for_features(gating_features);
             parse_quote! {
+                #cfg
                 pub use #name_ident;
             }
         })
@@ -436,20 +482,24 @@ fn gen_deps_module(stageleft_name: syn::Ident, manifest_path: &Path) -> syn::Ite
 
     let deps_reexported_runtime = all_crate_names
         .iter()
-        .map(|(name, original_crate_name)| {
+        .map(|(name, original_crate_name, gating_features)| {
             let original_crate_name_or_alias = original_crate_name.as_deref().unwrap_or(name);
+            let cfg = cfg_attr_for_features(gating_features);
             parse_quote! {
-                #stageleft_name::internal::add_deps_reexport(
-                    vec![#original_crate_name_or_alias],
-                    vec![
-                        option_env!("STAGELEFT_FINAL_CRATE_NAME")
-                            .unwrap_or(env!("CARGO_PKG_NAME"))
-                            .replace("-", "_"),
-                        ::std::borrow::ToOwned::to_owned("__staged"),
-                        ::std::borrow::ToOwned::to_owned("__deps"),
-                        ::std::borrow::ToOwned::to_owned(#name),
-                    ]
-                );
+                #cfg
+                {
+                    #stageleft_name::internal::add_deps_reexport(
+                        vec![#original_crate_name_or_alias],
+                        vec![
+                            option_env!("STAGELEFT_FINAL_CRATE_NAME")
+                                .unwrap_or(env!("CARGO_PKG_NAME"))
+                                .replace("-", "_"),
+                            ::std::borrow::ToOwned::to_owned("__staged"),
+                            ::std::borrow::ToOwned::to_owned("__deps"),
+                            ::std::borrow::ToOwned::to_owned(#name),
+                        ]
+                    );
+                }
             }
         })
         .collect::<Vec<syn::Stmt>>();
@@ -663,6 +713,154 @@ mod tests {
         assert!(
             generated_code.contains("add_deps_reexport"),
             "Generated code should contain add_deps_reexport calls: {}",
+            generated_code
+        );
+    }
+
+    #[test]
+    fn test_gen_deps_module_optional_implicit_feature() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "[dependencies]").unwrap();
+        writeln!(temp_file, r#"required_dep = "1.0""#).unwrap();
+        writeln!(
+            temp_file,
+            r#"optional_dep = {{ version = "2.0", optional = true }}"#
+        )
+        .unwrap();
+        temp_file.flush().unwrap();
+
+        let stageleft_name = syn::Ident::new("stageleft", Span::call_site());
+        let deps_module = gen_deps_module(stageleft_name, temp_file.path());
+        let generated_code = quote::quote!(#deps_module).to_string();
+
+        // required dep should not be gated
+        assert!(
+            !generated_code.contains(r#"feature = "required_dep""#),
+            "Required dep should not have cfg gate: {}",
+            generated_code
+        );
+        // optional dep with no explicit dep: reference gets implicit feature
+        assert!(
+            generated_code.contains(r#"any (feature = "optional_dep")"#),
+            "Optional dep should be gated by implicit feature: {}",
+            generated_code
+        );
+    }
+
+    #[test]
+    fn test_gen_deps_module_optional_explicit_dep_ref() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "[dependencies]").unwrap();
+        writeln!(
+            temp_file,
+            r#"optional_dep = {{ version = "1.0", optional = true }}"#
+        )
+        .unwrap();
+        writeln!(temp_file, "\n[features]").unwrap();
+        writeln!(temp_file, r#"my_feature = ["dep:optional_dep"]"#).unwrap();
+        temp_file.flush().unwrap();
+
+        let stageleft_name = syn::Ident::new("stageleft", Span::call_site());
+        let deps_module = gen_deps_module(stageleft_name, temp_file.path());
+        let generated_code = quote::quote!(#deps_module).to_string();
+
+        assert!(
+            generated_code.contains(r#"any (feature = "my_feature")"#),
+            "Optional dep should be gated by explicit feature: {}",
+            generated_code
+        );
+        assert!(
+            !generated_code.contains(r#"any (feature = "optional_dep")"#),
+            "Implicit feature should be suppressed when dep: is used: {}",
+            generated_code
+        );
+    }
+
+    #[test]
+    fn test_gen_deps_module_optional_multiple_features() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "[dependencies]").unwrap();
+        writeln!(
+            temp_file,
+            r#"optional_dep = {{ version = "1.0", optional = true }}"#
+        )
+        .unwrap();
+        writeln!(temp_file, "\n[features]").unwrap();
+        writeln!(temp_file, r#"feat_a = ["dep:optional_dep"]"#).unwrap();
+        writeln!(temp_file, r#"feat_b = ["dep:optional_dep"]"#).unwrap();
+        temp_file.flush().unwrap();
+
+        let stageleft_name = syn::Ident::new("stageleft", Span::call_site());
+        let deps_module = gen_deps_module(stageleft_name, temp_file.path());
+        let generated_code = quote::quote!(#deps_module).to_string();
+
+        assert!(
+            generated_code.contains("any"),
+            "Multiple features should use cfg(any(...)): {}",
+            generated_code
+        );
+        assert!(
+            generated_code.contains(r#"feature = "feat_a""#),
+            "Should contain feat_a: {}",
+            generated_code
+        );
+        assert!(
+            generated_code.contains(r#"feature = "feat_b""#),
+            "Should contain feat_b: {}",
+            generated_code
+        );
+    }
+
+    #[test]
+    fn test_gen_deps_module_optional_implicit_feature_transitive() {
+        // When bar = ["foo"] and foo is optional with no dep:foo references,
+        // the implicit feature "foo" is used. Enabling bar enables foo transitively.
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "[dependencies]").unwrap();
+        writeln!(temp_file, r#"foo = {{ version = "1.0", optional = true }}"#).unwrap();
+        writeln!(temp_file, "\n[features]").unwrap();
+        writeln!(temp_file, r#"bar = ["foo"]"#).unwrap();
+        temp_file.flush().unwrap();
+
+        let stageleft_name = syn::Ident::new("stageleft", Span::call_site());
+        let deps_module = gen_deps_module(stageleft_name, temp_file.path());
+        let generated_code = quote::quote!(#deps_module).to_string();
+
+        // Should gate on the implicit feature "foo", not "bar"
+        assert!(
+            generated_code.contains(r#"any (feature = "foo")"#),
+            "Should gate on implicit feature foo: {}",
+            generated_code
+        );
+        assert!(
+            !generated_code.contains(r#"feature = "bar""#),
+            "Should not gate on bar (it enables foo transitively): {}",
+            generated_code
+        );
+    }
+
+    #[test]
+    fn test_gen_deps_module_optional_dep_in_default_feature() {
+        // Cargo sets cfg(feature = "default") when default features are enabled,
+        // so gating on "default" is correct behavior.
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "[dependencies]").unwrap();
+        writeln!(
+            temp_file,
+            r#"optional_dep = {{ version = "1.0", optional = true }}"#
+        )
+        .unwrap();
+        writeln!(temp_file, "\n[features]").unwrap();
+        writeln!(temp_file, r#"default = ["dep:optional_dep"]"#).unwrap();
+        temp_file.flush().unwrap();
+
+        let stageleft_name = syn::Ident::new("stageleft", Span::call_site());
+        let deps_module = gen_deps_module(stageleft_name, temp_file.path());
+        let generated_code = quote::quote!(#deps_module).to_string();
+
+        assert!(
+            generated_code.contains(r#"any (feature = "default")"#),
+            "Should gate on default feature: {}",
             generated_code
         );
     }
