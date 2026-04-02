@@ -65,29 +65,35 @@ pub fn q_impl(root: TokenStream, toks: TokenStream) -> TokenStream {
         expr_toks
     };
 
-    let unitialized_free_variables = visitor.free_variables.iter().map(|i| {
-        let ident_shadow_str = format!("{i}__free");
-        let i_shadow_ident = syn::Ident::new(&ident_shadow_str, Span::call_site());
-
-        quote!(
-            #[allow(unused, non_upper_case_globals, non_snake_case)]
-            let #i_shadow_ident = {
-                let _out = ::#root::runtime_support::FreeVariableWithContext::uninitialized(&#i, __stageleft_ctx);
-                __output.captures.push(::#root::internal::Capture {
-                    ident: #ident_shadow_str,
-                    tokens: ::#root::runtime_support::FreeVariableWithContext::to_tokens(#i, __stageleft_ctx),
-                });
-                _out
-            };
-        )
-    });
-
-    let uninit_forgets = visitor.free_variables.iter().map(|i| {
+    // Get fn() -> T pointers BEFORE the if block so they're in scope for both branches.
+    let uninit_fn_bindings = visitor.free_variables.iter().map(|i| {
         let i_shadow_ident = syn::Ident::new(&format!("{i}__free"), Span::call_site());
 
         quote!(
-            #[allow(unused, non_upper_case_globals, non_snake_case, forget_non_drop)]
-            ::std::mem::forget(#i_shadow_ident);
+            #[allow(unused, non_upper_case_globals, non_snake_case)]
+            let #i_shadow_ident = ::#root::runtime_support::FreeVariableWithContext::uninitialized(&#i, __stageleft_ctx);
+        )
+    });
+
+    // Push captures inside the if block (consumes the original variables via to_tokens).
+    let capture_pushes = visitor.free_variables.iter().map(|i| {
+        let ident_shadow_str = format!("{i}__free");
+
+        quote!(
+            __output.captures.push(::#root::internal::Capture {
+                ident: #ident_shadow_str,
+                tokens: ::#root::runtime_support::FreeVariableWithContext::to_tokens(#i, __stageleft_ctx),
+            });
+        )
+    });
+
+    // In the unreachable block, invoke the fn() -> T to shadow with the typed value.
+    let uninit_invocations = visitor.free_variables.iter().map(|i| {
+        let i_shadow_ident = syn::Ident::new(&format!("{i}__free"), Span::call_site());
+
+        quote!(
+            #[allow(unused, non_upper_case_globals, non_snake_case)]
+            let #i_shadow_ident = #i_shadow_ident();
         )
     });
 
@@ -113,23 +119,29 @@ pub fn q_impl(root: TokenStream, toks: TokenStream) -> TokenStream {
 
     quote!({
         move |__stageleft_ctx: &_, __output: &mut ::#root::internal::QuotedOutput, __props: &mut _| {
-            #(#unitialized_free_variables;)*
+            // Bind fn() -> T pointers before the if block so they're in scope everywhere.
+            #(#uninit_fn_bindings)*
 
             if true {
+                // Push captures (consumes the original variables via to_tokens)
+                #(#capture_pushes)*
+
                 __output.module_path = module_path!();
                 __output.crate_name = option_env!("STAGELEFT_FINAL_CRATE_NAME").unwrap_or(env!("CARGO_PKG_NAME"));
                 __output.tokens = #expr_without_spans;
 
                 *__props = Some(#props_builder);
 
-                #(#uninit_forgets;)*
-                unsafe {
-                    return ::std::mem::MaybeUninit::uninit().assume_init();
-                }
+                // All side effects are done. Panic instead of returning T.
+                // The caller catches this with catch_unwind.
+                panic!("stageleft: q!() closure completed");
             }
 
+            // Unreachable: provides return type T for type inference.
+            // Invoke the fn() -> T pointers to bind typed variables.
             #[allow(unreachable_code, unused_qualifications)]
             {
+                #(#uninit_invocations)*
                 #rewritten_toks
             }
         }

@@ -1,8 +1,14 @@
 use std::marker::PhantomData;
-use std::mem::MaybeUninit;
 
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
+
+/// A generic function that panics when called. Used by `uninitialized()` to
+/// return a `fn() -> T` without constructing a `T`.
+#[doc(hidden)]
+pub fn panicking_uninit_value<T>() -> T {
+    panic!("stageleft: tried to use uninitialized free variable")
+}
 
 pub struct QuoteTokens {
     pub prelude: Option<TokenStream>,
@@ -87,11 +93,8 @@ pub trait FreeVariableWithContextWithProps<Ctx, Props> {
     where
         Self: Sized;
 
-    fn uninitialized(&self, _ctx: &Ctx) -> Self::O {
-        #[expect(clippy::uninit_assumed_init, reason = "this code should never run")]
-        unsafe {
-            MaybeUninit::uninit().assume_init()
-        }
+    fn uninitialized(&self, _ctx: &Ctx) -> fn() -> Self::O {
+        panicking_uninit_value::<Self::O>
     }
 }
 
@@ -103,7 +106,10 @@ pub trait FreeVariableWithContext<Ctx>: FreeVariableWithContextWithProps<Ctx, ()
         FreeVariableWithContextWithProps::to_tokens(self, ctx).0
     }
 
-    fn uninitialized(&self, ctx: &Ctx) -> <Self as FreeVariableWithContextWithProps<Ctx, ()>>::O {
+    fn uninitialized(
+        &self,
+        ctx: &Ctx,
+    ) -> fn() -> <Self as FreeVariableWithContextWithProps<Ctx, ()>>::O {
         FreeVariableWithContextWithProps::uninitialized(self, ctx)
     }
 }
@@ -119,11 +125,8 @@ pub trait FreeVariable<O>: FreeVariableWithContext<(), O = O> {
         FreeVariableWithContextWithProps::to_tokens(self, &()).0
     }
 
-    fn uninitialized(&self) -> O {
-        #[expect(clippy::uninit_assumed_init, reason = "this code should never run")]
-        unsafe {
-            MaybeUninit::uninit().assume_init()
-        }
+    fn uninitialized(&self) -> fn() -> O {
+        panicking_uninit_value::<O>
     }
 }
 
