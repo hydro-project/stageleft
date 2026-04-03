@@ -134,7 +134,7 @@ pub fn q_impl(root: TokenStream, toks: TokenStream) -> TokenStream {
 
                 // All side effects are done. Panic instead of returning T.
                 // The caller catches this with catch_unwind.
-                panic!("stageleft: q!() closure completed");
+                ::core::panic!("stageleft: q!() closure completed");
             }
 
             // Unreachable: provides return type T for type inference.
