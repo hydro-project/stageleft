@@ -486,8 +486,15 @@ impl<T, Ctx, Props, F: for<'b> FnOnce(&'b Ctx, &mut QuotedOutput, &mut Option<Pr
 
         let mut props = None;
 
-        // this is an uninit value so we can't drop it
-        std::mem::forget(self(ctx, &mut output, &mut props));
+        // The closure panics after setting output fields instead of returning
+        // a T value (which would require UB to construct). We catch the panic.
+        let output_ref = std::panic::AssertUnwindSafe(&mut output);
+        let props_ref = std::panic::AssertUnwindSafe(&mut props);
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            let output_ref = output_ref;
+            let props_ref = props_ref;
+            std::mem::forget(self(ctx, output_ref.0, props_ref.0));
+        }));
 
         let instantiated_free_variables = output.captures.iter().flat_map(|capture| {
             let ident = syn::Ident::new(capture.ident, Span::call_site());
