@@ -251,6 +251,16 @@ mod tests {
     }
 
     #[test]
+    fn test_let_else_structural_binding() {
+        test_quote! {
+            || {
+                let Some(x) = Some(1) else { return };
+                x
+            }
+        }
+    }
+
+    #[test]
     fn test_prelude_enum_variants() {
         test_quote! {
             Some(1)

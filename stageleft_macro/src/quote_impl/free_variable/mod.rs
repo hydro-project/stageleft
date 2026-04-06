@@ -64,6 +64,19 @@ pub struct FreeVariableVisitor {
     pub current_scope: ScopeStack,
 }
 
+/// Visitor that only extracts bound identifiers from patterns,
+/// without triggering free variable detection on paths like `Some`.
+struct PatBindingVisitor<'a> {
+    scope: &'a mut ScopeStack,
+}
+
+impl syn::visit::Visit<'_> for PatBindingVisitor<'_> {
+    fn visit_pat_ident(&mut self, i: &syn::PatIdent) {
+        self.scope.insert_term(i.ident.clone());
+        syn::visit::visit_pat_ident(self, i);
+    }
+}
+
 impl syn::visit_mut::VisitMut for FreeVariableVisitor {
     fn visit_expr_closure_mut(&mut self, i: &mut syn::ExprClosure) {
         self.current_scope.push();
@@ -108,23 +121,10 @@ impl syn::visit_mut::VisitMut for FreeVariableVisitor {
             syn::visit_mut::visit_local_init_mut(self, init);
         });
 
-        match &mut i.pat {
-            syn::Pat::Ident(pat_ident) => {
-                self.current_scope.insert_term(pat_ident.ident.clone());
-            }
-            syn::Pat::Type(pat_type) => {
-                self.visit_pat_mut(&mut pat_type.pat);
-            }
-            syn::Pat::Wild(_) => {
-                // Do nothing
-            }
-            syn::Pat::Tuple(pat_tuple) => {
-                for el in &mut pat_tuple.elems {
-                    self.visit_pat_mut(el);
-                }
-            }
-            _ => panic!("Local variables must be identifiers, got {:?}", i.pat),
-        }
+        let mut binding_visitor = PatBindingVisitor {
+            scope: &mut self.current_scope,
+        };
+        syn::visit::Visit::visit_pat(&mut binding_visitor, &i.pat);
     }
 
     fn visit_ident_mut(&mut self, i: &mut proc_macro2::Ident) {
