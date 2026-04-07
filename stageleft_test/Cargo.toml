@@ -17,7 +17,7 @@ test_feature = []
 once_cell_feature = ["dep:once_cell", "stageleft_test_macro/once_cell_feature"]
 
 [dependencies]
-stageleft = { path = "../stageleft", version = "^0.13.2" }
+stageleft = { path = "../stageleft", version = "^0.13.3" }
 stageleft_test_macro = { path = "../stageleft_test_macro" }
 
 rand_alias = { package = "rand", version = "0.9.0", features = ["thread_rng"] }
@@ -25,4 +25,4 @@ rand_alias = { package = "rand", version = "0.9.0", features = ["thread_rng"] }
 once_cell = { version = "1.20", optional = true }
 
 [build-dependencies]
-stageleft_tool = { path = "../stageleft_tool", version = "^0.13.2" }
+stageleft_tool = { path = "../stageleft_tool", version = "^0.13.3" }
