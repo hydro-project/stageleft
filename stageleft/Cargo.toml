@@ -21,6 +21,7 @@ proc-macro2 = "1"
 proc-macro-crate = "3.3"
 stageleft_macro = { path = "../stageleft_macro", version = "^0.13.4" }
 ctor = "0.4.1"
+parking_lot = "0.12"
 
 [dev-dependencies]
 slotmap = "1.0.0"

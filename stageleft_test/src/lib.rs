@@ -103,6 +103,7 @@ pub fn using_once_cell(_ctx: BorrowBounds<'_>) -> impl Quoted<'_, i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use stageleft::QuotedWithContext;
 
     #[test]
     fn test_raise_to_power_of_two() {
@@ -169,5 +170,11 @@ mod tests {
     fn test_using_once_cell() {
         let result = using_once_cell!();
         assert_eq!(result, 42);
+    }
+
+    #[test]
+    fn test_quoting() {
+        let quoted = q!(1 + 2);
+        let _ = quoted.splice_typed_ctx(&());
     }
 }
