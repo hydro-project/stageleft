@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::{env, fs};
 
@@ -11,7 +11,7 @@ use syn::visit_mut::VisitMut;
 use toml_edit::DocumentMut;
 
 struct GenMacroVistor {
-    exported_macros: BTreeSet<(String, String)>,
+    exported_macros: BTreeMap<(String, String), Vec<syn::Attribute>>,
     current_mod: syn::Path,
 }
 
@@ -39,6 +39,14 @@ impl<'a> Visit<'a> for GenMacroVistor {
             let mut i_cloned = i.clone();
             i_cloned.attrs = vec![];
             i_cloned.vis = syn::Visibility::Inherited; // normalize pub
+            let non_entry_attrs = i
+                .attrs
+                .iter()
+                .filter(|a| {
+                    a.path().to_token_stream().to_string() != "stageleft :: entry" // TODO(mingwei): use #root?
+                })
+                .cloned()
+                .collect::<Vec<_>>();
 
             let contents = i_cloned
                 .to_token_stream()
@@ -47,8 +55,10 @@ impl<'a> Visit<'a> for GenMacroVistor {
                 .filter(|c| c.is_alphanumeric())
                 .collect::<String>();
             let contents_hash = format!("{:X}", Sha256::digest(contents));
-            self.exported_macros
-                .insert((contents_hash, cur_path.to_token_stream().to_string()));
+            self.exported_macros.insert(
+                (contents_hash, cur_path.to_token_stream().to_string()),
+                non_entry_attrs,
+            );
         }
     }
 }
@@ -69,13 +79,14 @@ pub fn gen_macro(staged_path: &Path, crate_name: &str) {
 
     let mut out_file: syn::File = parse_quote!();
 
-    for (hash, exported_from) in visitor.exported_macros {
+    for ((hash, exported_from), attrs) in visitor.exported_macros {
         let underscored_path = syn::Ident::new(&("macro_".to_owned() + &hash), Span::call_site());
         let underscored_path_impl =
             syn::Ident::new(&("macro_".to_owned() + &hash + "_impl"), Span::call_site());
         let exported_from_parsed: syn::Path = syn::parse_str(&exported_from).unwrap();
 
         let proc_macro_wrapper: syn::ItemFn = parse_quote!(
+            #(#attrs)*
             #[proc_macro]
             #[expect(unused_qualifications, non_snake_case, reason = "generated code")]
             pub fn #underscored_path(input: ::proc_macro::TokenStream) -> ::proc_macro::TokenStream {
