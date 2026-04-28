@@ -13,7 +13,7 @@ workspace = true
 release = false
 
 [dependencies]
-stageleft = { path = "../stageleft", version = "^0.13.4" }
+stageleft = { path = "../stageleft", version = "^0.13.5" }
 
 slotmap = "1.0.0"
 
@@ -27,7 +27,7 @@ cfg-if = { version = "1.0", optional = true }
 my_cfg_feature = ["dep:cfg-if"]
 
 [build-dependencies]
-stageleft_tool = { path = "../stageleft_tool", version = "^0.13.4" }
+stageleft_tool = { path = "../stageleft_tool", version = "^0.13.5" }
 
 [dev-dependencies]
 insta = "1.39"
