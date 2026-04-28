@@ -477,6 +477,9 @@ impl<T, Ctx, Props, F: for<'b> FnOnce(&'b Ctx, &mut QuotedOutput, &mut Option<Pr
     type O = T;
 
     fn to_tokens(self, ctx: &Ctx) -> (QuoteTokens, Props) {
+        static GLOBAL_HOOK_MUTEX: parking_lot::ReentrantMutex<()> =
+            parking_lot::ReentrantMutex::new(());
+
         let mut output = QuotedOutput {
             module_path: "",
             crate_name: "",
@@ -490,6 +493,7 @@ impl<T, Ctx, Props, F: for<'b> FnOnce(&'b Ctx, &mut QuotedOutput, &mut Option<Pr
         // a T value (which would require UB to construct). We catch the panic.
         let output_ref = std::panic::AssertUnwindSafe(&mut output);
         let props_ref = std::panic::AssertUnwindSafe(&mut props);
+        let _guard = GLOBAL_HOOK_MUTEX.lock();
         let prev_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(|_| {}));
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
@@ -498,6 +502,7 @@ impl<T, Ctx, Props, F: for<'b> FnOnce(&'b Ctx, &mut QuotedOutput, &mut Option<Pr
             std::mem::forget(self(ctx, output_ref.0, props_ref.0));
         }));
         std::panic::set_hook(prev_hook);
+        drop(_guard);
 
         let instantiated_free_variables = output.captures.iter().flat_map(|capture| {
             let ident = syn::Ident::new(capture.ident, Span::call_site());
