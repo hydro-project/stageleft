@@ -1,3 +1,4 @@
+#![allow(unexpected_cfgs)]
 use stageleft::*;
 
 fn closure_capture_lifetime_2<'a, I: Copy + Into<u32>>(

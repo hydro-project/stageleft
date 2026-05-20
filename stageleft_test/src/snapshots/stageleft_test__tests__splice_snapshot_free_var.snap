@@ -1,0 +1,15 @@
+---
+source: stageleft_test/src/lib.rs
+assertion_line: 198
+expression: "prettyplease::unparse(&file)"
+---
+fn main() {
+    {
+        use crate::__staged::__deps::*;
+        use crate::__staged::tests::*;
+        {
+            let x__free = 42i32;
+            x__free + 1
+        }
+    }
+}

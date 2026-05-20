@@ -1,13 +1,14 @@
 error[E0309]: the parameter type `I` may not live long enough
- --> tests/compile-fail/closure_capture_lifetime.rs:7:8
+ --> tests/compile-fail/closure_capture_lifetime.rs:8:8
   |
-3 | fn closure_capture_lifetime_2<'a, I: Copy + Into<u32>>(
+4 | fn closure_capture_lifetime_2<'a, I: Copy + Into<u32>>(
   |                               -- the parameter type `I` must be valid for the lifetime `'a` as defined here...
 ...
-7 |     q!(Box::new(move || { v.into() }) as Box<dyn Fn() -> u32 + 'a>)
+8 |     q!(Box::new(move || { v.into() }) as Box<dyn Fn() -> u32 + 'a>)
   |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ ...so that the type `I` will meet its required lifetime bounds
   |
+  = note: this error originates in the macro `__stageleft_quote_tests_compile_fail_closure_capture_lifetime_rs_8_7` which comes from the expansion of the macro `q` (in Nightly builds, run with -Z macro-backtrace for more info)
 help: consider adding an explicit lifetime bound
   |
-3 | fn closure_capture_lifetime_2<'a, I: Copy + Into<u32> + 'a>(
+4 | fn closure_capture_lifetime_2<'a, I: Copy + Into<u32> + 'a>(
   |                                                       ++++

@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 mod prelude;
 use prelude::is_prelude;
@@ -61,7 +61,10 @@ impl ScopeStack {
 #[derive(Default)]
 pub struct FreeVariableVisitor {
     pub free_variables: BTreeSet<syn::Ident>,
+    pub relative_paths: BTreeMap<String, usize>,
     pub current_scope: ScopeStack,
+    /// When true, rewrite relative path prefixes to __sl_pN idents in-place.
+    pub rewrite_paths: bool,
 }
 
 /// Visitor that only extracts bound identifiers from patterns,
@@ -142,6 +145,40 @@ impl syn::visit_mut::VisitMut for FreeVariableVisitor {
     }
 
     fn visit_path_mut(&mut self, i: &mut syn::Path) {
+        // Collect and rewrite relative path prefixes (crate::, self::, super::)
+        if self.rewrite_paths
+            && i.leading_colon.is_none()
+            && i.segments.len() > 1
+            && let Some(first) = i.segments.first()
+            && (first.ident == "crate" || first.ident == "self" || first.ident == "super")
+        {
+            let prefix_len = if first.ident == "crate" {
+                1
+            } else {
+                i.segments
+                    .iter()
+                    .take_while(|s| s.ident == "self" || s.ident == "super")
+                    .count()
+            };
+            let prefix_segments: Vec<_> = i.segments.iter().take(prefix_len).collect();
+            let key = quote::quote!(#(#prefix_segments)::*).to_string();
+            let next_idx = self.relative_paths.len();
+            let idx = *self.relative_paths.entry(key).or_insert(next_idx);
+
+            let metavar = syn::Ident::new(&format!("__sl_p{idx}"), proc_macro2::Span::call_site());
+            let remaining: Vec<_> = i.segments.iter().skip(prefix_len).cloned().collect();
+            i.segments.clear();
+            i.segments.push(syn::PathSegment::from(metavar));
+            for seg in remaining {
+                i.segments.push(seg);
+            }
+            // Visit path arguments in remaining segments
+            for node in i.segments.iter_mut().skip(1) {
+                self.visit_path_arguments_mut(&mut node.arguments);
+            }
+            return;
+        }
+
         if i.leading_colon.is_none() && !is_prelude(&i.segments.first().unwrap().ident) {
             let one_segment = i.segments.len() == 1;
             let node = i.segments.first_mut().unwrap();

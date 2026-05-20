@@ -26,3 +26,7 @@ once_cell = { version = "1.20", optional = true }
 
 [build-dependencies]
 stageleft_tool = { path = "../stageleft_tool", version = "^0.14.0" }
+
+[dev-dependencies]
+insta = "1.39"
+prettyplease = { version = "0.2.0", features = ["verbatim"] }

@@ -1,9 +1,18 @@
 ---
 source: stageleft_macro/src/quote_impl/mod.rs
+assertion_line: 444
 expression: "prettyplease :: unparse(& wrapped)"
 ---
 fn main() {
     {
+        #[allow(unexpected_cfgs, non_local_definitions, clippy::crate_in_macro_def)]
+        #[cfg_attr(not(stageleft_macro), macro_export)]
+        #[doc(hidden)]
+        macro_rules! __stageleft_quote__parsed_string_1__1_0 {
+            ([] [{ let x = 1; x + 2 }]) => {
+                { #[allow(non_snake_case)] { { let x = 1; x + 2 } } }
+            };
+        }
         move |
             __stageleft_ctx: &_,
             __output: &mut ::stageleft::internal::QuotedOutput,
@@ -13,17 +22,15 @@ fn main() {
                 __output.module_path = module_path!();
                 __output.crate_name = option_env!("STAGELEFT_FINAL_CRATE_NAME")
                     .unwrap_or(env!("CARGO_PKG_NAME"));
+                __output.pkg_name = env!("CARGO_PKG_NAME");
                 __output.tokens = "{ let x = 1 ; x + 2 }";
+                __output.macro_name = Some("__stageleft_quote__parsed_string_1__1_0");
+                __output.relative_paths = &[];
                 *__props = Some(stageleft::properties::Property::make_root(__props));
                 ::core::panic!("stageleft: q!() closure completed");
             }
             #[allow(unreachable_code, unused_qualifications)]
-            {
-                {
-                    let x = 1;
-                    x + 2
-                }
-            }
+            { __stageleft_quote__parsed_string_1__1_0!([] [{ let x = 1; x + 2 }]) }
         }
     }
 }

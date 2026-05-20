@@ -47,6 +47,29 @@ pub fn set_macro_to_crate(macro_name: impl Into<String>, crate_name: impl Into<S
     });
 }
 
+static TEST_MODULES: std::sync::RwLock<Vec<(&'static str, &'static [&'static str])>> =
+    std::sync::RwLock::new(Vec::new());
+
+/// Register test module paths for a crate. Called from ctor in generated code.
+pub fn register_test_modules(crate_name: &'static str, modules: &'static [&'static str]) {
+    TEST_MODULES.write().unwrap().push((crate_name, modules));
+}
+
+/// Check if a module path is inside a test module for the given crate.
+pub(crate) fn is_test_module(crate_name: &str, module_path: &str) -> bool {
+    let guard = TEST_MODULES.read().unwrap();
+    for (name, modules) in guard.iter() {
+        if *name == crate_name {
+            for test_mod in modules.iter() {
+                if module_path == *test_mod || module_path.starts_with(&format!("{test_mod}::")) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 pub trait ParseFromLiteral {
     fn parse_from_literal(literal: &syn::Expr) -> Self;
 }

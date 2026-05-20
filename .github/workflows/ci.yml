@@ -27,9 +27,6 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
       CARGO_INCREMENTAL: 0
-      CARGO_PROFILE_DEV_STRIP: "debuginfo"
-      CARGO_PROFILE_TEST_STRIP: "debuginfo"
-      CARGO_PROFILE_RELEASE_STRIP: "debuginfo"
 
     steps:
       - name: Checkout sources
@@ -67,14 +64,14 @@ jobs:
     if: ${{ needs.pre_job.outputs.should_skip != 'true' || github.event_name != 'pull_request' }}
     timeout-minutes: 50
     needs: pre_job
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
 
     env:
       CARGO_TERM_COLOR: always
       CARGO_INCREMENTAL: 0
-      CARGO_PROFILE_DEV_STRIP: "debuginfo"
-      CARGO_PROFILE_TEST_STRIP: "debuginfo"
-      CARGO_PROFILE_RELEASE_STRIP: "debuginfo"
 
     steps:
       - name: Checkout sources
@@ -96,8 +93,14 @@ jobs:
             core.exportVariable('SCCACHE_GHA_ENABLED', 'true');
             core.exportVariable('RUSTC_WRAPPER', 'sccache');
 
-      - name: Install cargo-nextest
+      - name: Install cargo-nextest (Linux)
+        if: runner.os == 'Linux'
         run: curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C ${CARGO_HOME:-~/.cargo}/bin
+
+      - name: Install cargo-nextest (Windows)
+        if: runner.os == 'Windows'
+        run: curl -LsSf https://get.nexte.st/latest/windows-tar | tar zxf - -C $env:USERPROFILE\.cargo\bin
+        shell: pwsh
 
       - name: Run cargo nextest on all targets
         run: cargo nextest run --no-fail-fast --all-targets
