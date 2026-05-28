@@ -263,3 +263,27 @@ pub fn fn2_borrow_mut_type_hint<'a, I1, I2, O>(
 ) -> impl Fn(&mut I1, I2) -> O + 'a {
     f
 }
+
+pub fn fn0_mut_type_hint<'a, O>(f: impl FnMut() -> O + 'a) -> impl FnMut() -> O + 'a {
+    f
+}
+
+pub fn fn1_mut_type_hint<'a, I, O>(f: impl FnMut(I) -> O + 'a) -> impl FnMut(I) -> O + 'a {
+    f
+}
+
+pub fn fn1_borrow_mut_type_hint<'a, I, O>(f: impl FnMut(&I) -> O + 'a) -> impl FnMut(&I) -> O + 'a {
+    f
+}
+
+pub fn fn2_mut_type_hint<'a, I1, I2, O>(
+    f: impl FnMut(I1, I2) -> O + 'a,
+) -> impl FnMut(I1, I2) -> O + 'a {
+    f
+}
+
+pub fn fn2_borrow_mut_mut_type_hint<'a, I1, I2, O>(
+    f: impl FnMut(&I1, &I2) -> O + 'a,
+) -> impl FnMut(&I1, &I2) -> O + 'a {
+    f
+}
