@@ -65,7 +65,7 @@ fn closure_capture_lifetime<'a, I: Copy + Into<u32> + 'a>(
     _ctx: BorrowBounds<'a>,
     v: RuntimeData<I>,
 ) -> impl Quoted<'a, Box<dyn Fn() -> u32 + 'a>> {
-    q!(Box::new(move || { v.into() }) as Box<dyn Fn() -> u32 + 'a>)
+    q!(Box::new(move || { v.into() }) as Box<dyn Fn() -> u32>)
 }
 
 fn my_top_level_function() -> bool {
