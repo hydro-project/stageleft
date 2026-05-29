@@ -65,7 +65,7 @@ fn closure_capture_lifetime<'a, I: Copy + Into<u32> + 'a>(
     _ctx: BorrowBounds<'a>,
     v: RuntimeData<I>,
 ) -> impl Quoted<'a, Box<dyn Fn() -> u32 + 'a>> {
-    q!(Box::new(move || { v.into() }) as Box<dyn Fn() -> u32>)
+    q!(Box::new(move || { v.into() }) as Box<dyn Fn() -> u32 + 'a>)
 }
 
 fn my_top_level_function() -> bool {
@@ -97,6 +97,11 @@ pub fn using_once_cell(_ctx: BorrowBounds<'_>) -> impl Quoted<'_, i32> {
     q!(*once_cell::sync::Lazy::force(&once_cell::sync::Lazy::new(
         || 42
     )))
+}
+
+#[expect(dead_code, reason = "test code")]
+fn ref_str<'a>(s: &str) -> impl Quoted<'a, &'static str> {
+    q!(s)
 }
 
 #[cfg(stageleft_runtime)]
