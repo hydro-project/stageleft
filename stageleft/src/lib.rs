@@ -448,25 +448,24 @@ fn stageleft_root() -> syn::Ident {
     }
 }
 
-pub trait IntoQuotedOnce<'a, T, Ctx, Props = ()>:
-    for<'b> FnOnce(&'b Ctx, &mut QuotedOutput, &mut Option<Props>) -> T
-    + 'a
+pub trait IntoQuotedOnce<'a, T: 'a, Ctx, Props = ()>:
+    FnOnce(&Ctx, &mut QuotedOutput, &mut Option<Props>) -> T
     + QuotedWithContextWithProps<'a, T, Ctx, Props>
 {
-    fn boxed(self) -> Box<dyn IntoQuotedOnce<'a, T, Ctx, Props>>
+    fn boxed(self) -> Box<dyn 'a + IntoQuotedOnce<'a, T, Ctx, Props>>
     where
-        Self: Sized,
+        Self: 'a + Sized,
     {
         Box::new(self)
     }
 }
 
-impl<'a, T, Ctx, Props, F: for<'b> FnOnce(&'b Ctx, &mut QuotedOutput, &mut Option<Props>) -> T + 'a>
+impl<'a, T: 'a, Ctx, Props, F: FnOnce(&Ctx, &mut QuotedOutput, &mut Option<Props>) -> T>
     QuotedWithContextWithProps<'a, T, Ctx, Props> for F
 {
 }
 
-impl<'a, T, Ctx, Props, F: for<'b> FnOnce(&'b Ctx, &mut QuotedOutput, &mut Option<Props>) -> T + 'a>
+impl<'a, T: 'a, Ctx, Props, F: FnOnce(&Ctx, &mut QuotedOutput, &mut Option<Props>) -> T>
     IntoQuotedOnce<'a, T, Ctx, Props> for F
 {
 }
@@ -577,12 +576,12 @@ impl<T, Ctx, Props, F: for<'b> FnOnce(&'b Ctx, &mut QuotedOutput, &mut Option<Pr
     }
 }
 
-pub trait IntoQuotedMut<'a, T, Ctx, Props = ()>:
-    FnMut(&Ctx, &mut QuotedOutput, &mut Option<Props>) -> T + 'a
+pub trait IntoQuotedMut<'a, T: 'a, Ctx, Props = ()>:
+    FnMut(&Ctx, &mut QuotedOutput, &mut Option<Props>) -> T
 {
 }
 
-impl<'a, T, Ctx, Props, F: FnMut(&Ctx, &mut QuotedOutput, &mut Option<Props>) -> T + 'a>
+impl<'a, T: 'a, Ctx, Props, F: FnMut(&Ctx, &mut QuotedOutput, &mut Option<Props>) -> T>
     IntoQuotedMut<'a, T, Ctx, Props> for F
 {
 }

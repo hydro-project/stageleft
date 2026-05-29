@@ -99,6 +99,11 @@ pub fn using_once_cell(_ctx: BorrowBounds<'_>) -> impl Quoted<'_, i32> {
     )))
 }
 
+#[expect(dead_code, reason = "test code")]
+fn ref_str<'a>(s: &str) -> impl Quoted<'a, &'static str> {
+    q!(s)
+}
+
 #[cfg(stageleft_runtime)]
 #[cfg(test)]
 mod tests {
