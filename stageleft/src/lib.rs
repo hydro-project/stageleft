@@ -272,7 +272,7 @@ pub trait QuotedWithContextWithProps<'a, T, Ctx, Props>:
         )
     }
 
-    fn splice_fn0_mut_ctx_props<O>(self, ctx: &Ctx) -> (syn::Expr, Props)
+    fn splice_fnmut0_ctx_props<O>(self, ctx: &Ctx) -> (syn::Expr, Props)
     where
         Self: Sized,
         T: FnMut() -> O,
@@ -284,13 +284,13 @@ pub trait QuotedWithContextWithProps<'a, T, Ctx, Props>:
 
         (
             syn::parse_quote! {
-                #stageleft_root::runtime_support::fn0_mut_type_hint::<#out_type>(#inner_expr)
+                #stageleft_root::runtime_support::fnmut0_type_hint::<#out_type>(#inner_expr)
             },
             props,
         )
     }
 
-    fn splice_fn1_mut_ctx_props<I, O>(self, ctx: &Ctx) -> (syn::Expr, Props)
+    fn splice_fnmut1_ctx_props<I, O>(self, ctx: &Ctx) -> (syn::Expr, Props)
     where
         Self: Sized,
         T: FnMut(I) -> O,
@@ -303,13 +303,13 @@ pub trait QuotedWithContextWithProps<'a, T, Ctx, Props>:
 
         (
             syn::parse_quote! {
-                #stageleft_root::runtime_support::fn1_mut_type_hint::<#in_type, #out_type>(#inner_expr)
+                #stageleft_root::runtime_support::fnmut1_type_hint::<#in_type, #out_type>(#inner_expr)
             },
             props,
         )
     }
 
-    fn splice_fn1_borrow_mut_ctx_props<I, O>(self, ctx: &Ctx) -> (syn::Expr, Props)
+    fn splice_fnmut1_borrow_ctx_props<I, O>(self, ctx: &Ctx) -> (syn::Expr, Props)
     where
         Self: Sized,
         T: FnMut(&I) -> O,
@@ -322,13 +322,13 @@ pub trait QuotedWithContextWithProps<'a, T, Ctx, Props>:
 
         (
             syn::parse_quote! {
-                #stageleft_root::runtime_support::fn1_borrow_mut_type_hint::<#in_type, #out_type>(#inner_expr)
+                #stageleft_root::runtime_support::fnmut1_borrow_type_hint::<#in_type, #out_type>(#inner_expr)
             },
             props,
         )
     }
 
-    fn splice_fn2_mut_ctx_props<I1, I2, O>(self, ctx: &Ctx) -> (syn::Expr, Props)
+    fn splice_fnmut2_ctx_props<I1, I2, O>(self, ctx: &Ctx) -> (syn::Expr, Props)
     where
         Self: Sized,
         T: FnMut(I1, I2) -> O,
@@ -342,13 +342,13 @@ pub trait QuotedWithContextWithProps<'a, T, Ctx, Props>:
 
         (
             syn::parse_quote! {
-                #stageleft_root::runtime_support::fn2_mut_type_hint::<#in1_type, #in2_type, #out_type>(#inner_expr)
+                #stageleft_root::runtime_support::fnmut2_type_hint::<#in1_type, #in2_type, #out_type>(#inner_expr)
             },
             props,
         )
     }
 
-    fn splice_fn2_borrow_mut_mut_ctx_props<I1, I2, O>(self, ctx: &Ctx) -> (syn::Expr, Props)
+    fn splice_fnmut2_borrow_ctx_props<I1, I2, O>(self, ctx: &Ctx) -> (syn::Expr, Props)
     where
         Self: Sized,
         T: FnMut(&I1, &I2) -> O,
@@ -362,7 +362,7 @@ pub trait QuotedWithContextWithProps<'a, T, Ctx, Props>:
 
         (
             syn::parse_quote! {
-                #stageleft_root::runtime_support::fn2_borrow_mut_mut_type_hint::<#in1_type, #in2_type, #out_type>(#inner_expr)
+                #stageleft_root::runtime_support::fnmut2_borrow_type_hint::<#in1_type, #in2_type, #out_type>(#inner_expr)
             },
             props,
         )
@@ -432,44 +432,44 @@ pub trait QuotedWithContext<'a, T, Ctx>: QuotedWithContextWithProps<'a, T, Ctx, 
         QuotedWithContextWithProps::splice_fn2_borrow_mut_ctx_props(self, ctx).0
     }
 
-    fn splice_fn0_mut_ctx<O>(self, ctx: &Ctx) -> syn::Expr
+    fn splice_fnmut0_ctx<O>(self, ctx: &Ctx) -> syn::Expr
     where
         Self: Sized,
         T: FnMut() -> O,
     {
-        QuotedWithContextWithProps::splice_fn0_mut_ctx_props(self, ctx).0
+        QuotedWithContextWithProps::splice_fnmut0_ctx_props(self, ctx).0
     }
 
-    fn splice_fn1_mut_ctx<I, O>(self, ctx: &Ctx) -> syn::Expr
+    fn splice_fnmut1_ctx<I, O>(self, ctx: &Ctx) -> syn::Expr
     where
         Self: Sized,
         T: FnMut(I) -> O,
     {
-        QuotedWithContextWithProps::splice_fn1_mut_ctx_props(self, ctx).0
+        QuotedWithContextWithProps::splice_fnmut1_ctx_props(self, ctx).0
     }
 
-    fn splice_fn1_borrow_mut_ctx<I, O>(self, ctx: &Ctx) -> syn::Expr
+    fn splice_fnmut1_borrow_ctx<I, O>(self, ctx: &Ctx) -> syn::Expr
     where
         Self: Sized,
         T: FnMut(&I) -> O,
     {
-        QuotedWithContextWithProps::splice_fn1_borrow_mut_ctx_props(self, ctx).0
+        QuotedWithContextWithProps::splice_fnmut1_borrow_ctx_props(self, ctx).0
     }
 
-    fn splice_fn2_mut_ctx<I1, I2, O>(self, ctx: &Ctx) -> syn::Expr
+    fn splice_fnmut2_ctx<I1, I2, O>(self, ctx: &Ctx) -> syn::Expr
     where
         Self: Sized,
         T: FnMut(I1, I2) -> O,
     {
-        QuotedWithContextWithProps::splice_fn2_mut_ctx_props(self, ctx).0
+        QuotedWithContextWithProps::splice_fnmut2_ctx_props(self, ctx).0
     }
 
-    fn splice_fn2_borrow_mut_mut_ctx<I1, I2, O>(self, ctx: &Ctx) -> syn::Expr
+    fn splice_fnmut2_borrow_ctx<I1, I2, O>(self, ctx: &Ctx) -> syn::Expr
     where
         Self: Sized,
         T: FnMut(&I1, &I2) -> O,
     {
-        QuotedWithContextWithProps::splice_fn2_borrow_mut_mut_ctx_props(self, ctx).0
+        QuotedWithContextWithProps::splice_fnmut2_borrow_ctx_props(self, ctx).0
     }
 
     fn splice_untyped(self) -> syn::Expr
@@ -563,7 +563,7 @@ pub trait QuotedWithContext<'a, T, Ctx>: QuotedWithContextWithProps<'a, T, Ctx, 
         }
     }
 
-    fn splice_fn0_mut<O>(self) -> syn::Expr
+    fn splice_fnmut0<O>(self) -> syn::Expr
     where
         Self: Sized,
         Ctx: Default,
@@ -575,11 +575,11 @@ pub trait QuotedWithContext<'a, T, Ctx>: QuotedWithContextWithProps<'a, T, Ctx, 
         let out_type = quote_type::<O>();
 
         syn::parse_quote! {
-            #stageleft_root::runtime_support::fn0_mut_type_hint::<#out_type>(#inner_expr)
+            #stageleft_root::runtime_support::fnmut0_type_hint::<#out_type>(#inner_expr)
         }
     }
 
-    fn splice_fn1_mut<I, O>(self) -> syn::Expr
+    fn splice_fnmut1<I, O>(self) -> syn::Expr
     where
         Self: Sized,
         Ctx: Default,
@@ -592,11 +592,11 @@ pub trait QuotedWithContext<'a, T, Ctx>: QuotedWithContextWithProps<'a, T, Ctx, 
         let out_type = quote_type::<O>();
 
         syn::parse_quote! {
-            #stageleft_root::runtime_support::fn1_mut_type_hint::<#in_type, #out_type>(#inner_expr)
+            #stageleft_root::runtime_support::fnmut1_type_hint::<#in_type, #out_type>(#inner_expr)
         }
     }
 
-    fn splice_fn1_borrow_mut<I, O>(self) -> syn::Expr
+    fn splice_fnmut1_borrow<I, O>(self) -> syn::Expr
     where
         Self: Sized,
         Ctx: Default,
@@ -609,11 +609,11 @@ pub trait QuotedWithContext<'a, T, Ctx>: QuotedWithContextWithProps<'a, T, Ctx, 
         let out_type = quote_type::<O>();
 
         syn::parse_quote! {
-            #stageleft_root::runtime_support::fn1_borrow_mut_type_hint::<#in_type, #out_type>(#inner_expr)
+            #stageleft_root::runtime_support::fnmut1_borrow_type_hint::<#in_type, #out_type>(#inner_expr)
         }
     }
 
-    fn splice_fn2_mut<I1, I2, O>(self) -> syn::Expr
+    fn splice_fnmut2<I1, I2, O>(self) -> syn::Expr
     where
         Self: Sized,
         Ctx: Default,
@@ -627,11 +627,11 @@ pub trait QuotedWithContext<'a, T, Ctx>: QuotedWithContextWithProps<'a, T, Ctx, 
         let out_type = quote_type::<O>();
 
         syn::parse_quote! {
-            #stageleft_root::runtime_support::fn2_mut_type_hint::<#in1_type, #in2_type, #out_type>(#inner_expr)
+            #stageleft_root::runtime_support::fnmut2_type_hint::<#in1_type, #in2_type, #out_type>(#inner_expr)
         }
     }
 
-    fn splice_fn2_borrow_mut_mut<I1, I2, O>(self) -> syn::Expr
+    fn splice_fnmut2_borrow<I1, I2, O>(self) -> syn::Expr
     where
         Self: Sized,
         Ctx: Default,
@@ -645,7 +645,7 @@ pub trait QuotedWithContext<'a, T, Ctx>: QuotedWithContextWithProps<'a, T, Ctx, 
         let out_type = quote_type::<O>();
 
         syn::parse_quote! {
-            #stageleft_root::runtime_support::fn2_borrow_mut_mut_type_hint::<#in1_type, #in2_type, #out_type>(#inner_expr)
+            #stageleft_root::runtime_support::fnmut2_borrow_type_hint::<#in1_type, #in2_type, #out_type>(#inner_expr)
         }
     }
 }
