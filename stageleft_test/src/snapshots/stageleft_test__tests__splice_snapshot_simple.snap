@@ -1,0 +1,12 @@
+---
+source: stageleft_test/src/lib.rs
+assertion_line: 189
+expression: "prettyplease::unparse(&file)"
+---
+fn main() {
+    {
+        use crate::__staged::__deps::*;
+        use crate::__staged::tests::*;
+        { 1 + 2 }
+    }
+}

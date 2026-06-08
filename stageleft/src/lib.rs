@@ -29,6 +29,9 @@ pub mod internal {
         pub crate_name: &'static str,
         pub tokens: &'static str,
         pub captures: Vec<Capture>,
+        pub macro_name: Option<&'static str>,
+        pub relative_paths: &'static [&'static str],
+        pub pkg_name: &'static str,
     }
 }
 
@@ -104,6 +107,17 @@ macro_rules! stageleft_no_entry_crate {
                 $crate::PATH_SEPARATOR!(),
                 "staged_deps.rs"
             ));
+        }
+
+        #[cfg(test)]
+        #[$crate::internal::ctor::ctor(crate_path = $crate::internal::ctor)]
+        fn __stageleft_register_test_modules() {
+            let (crate_name, modules) = include!(concat!(
+                env!("OUT_DIR"),
+                $crate::PATH_SEPARATOR!(),
+                "test_modules.rs"
+            ));
+            $crate::runtime_support::register_test_modules(crate_name, modules);
         }
     };
 }
@@ -692,108 +706,254 @@ impl<'a, T: 'a, Ctx, Props, F: FnOnce(&Ctx, &mut QuotedOutput, &mut Option<Props
 {
 }
 
+/// Resolves a relative path string (e.g. "crate :: Foo :: bar", "self :: func", "super :: X")
+/// to the concrete rewritten path for the splice site.
+fn resolve_relative_path(
+    path_str: &str,
+    final_crate_root: &proc_macro2::TokenStream,
+    module_path: Option<&syn::Path>,
+) -> proc_macro2::TokenStream {
+    let mut path: syn::Path = syn::parse_str(path_str).unwrap();
+
+    // Apply the same rewriting logic as RewritePaths
+    let crate_root_path: syn::Path = syn::parse_quote!(#final_crate_root::__staged);
+    let full_module_path: Option<syn::Path> =
+        module_path.map(|mp| syn::parse_quote!(#final_crate_root::__staged::#mp));
+
+    rewrite_paths::RewritePaths {
+        crate_root_path,
+        module_path: full_module_path,
+    }
+    .visit_path_mut(&mut path);
+
+    quote!(#path)
+}
+
+/// Generates the spliced token stream from a `QuotedOutput`.
+fn splice_quoted_output(output: &QuotedOutput) -> proc_macro2::TokenStream {
+    let final_crate_root = get_final_crate_name(output.crate_name);
+
+    let module_path: syn::Path = syn::parse_str(output.module_path).unwrap();
+    let module_path_segments = module_path
+        .segments
+        .iter()
+        .skip(1)
+        .cloned()
+        .collect::<Vec<_>>();
+    let module_path = if module_path_segments.is_empty()
+        || module_path_segments
+            .iter()
+            .any(|segment| segment.ident.to_string().starts_with("__doctest"))
+    {
+        None
+    } else {
+        Some(syn::Path {
+            leading_colon: None,
+            segments: syn::punctuated::Punctuated::from_iter(module_path_segments),
+        })
+    };
+
+    let macro_name = output
+        .macro_name
+        .expect("macro_name must be set when splicing");
+    let macro_ident = syn::Ident::new(macro_name, Span::call_site());
+
+    // Resolve path arguments
+    let path_args: Vec<proc_macro2::TokenStream> = output
+        .relative_paths
+        .iter()
+        .map(|path_str| resolve_relative_path(path_str, &final_crate_root, module_path.as_ref()))
+        .collect();
+
+    // Free variable expression arguments: `name = value`
+    let free_var_args: Vec<proc_macro2::TokenStream> = output
+        .captures
+        .iter()
+        .filter_map(|capture| {
+            let ident = syn::Ident::new(capture.ident, Span::call_site());
+            capture
+                .tokens
+                .expr
+                .as_ref()
+                .map(|expr| quote!(#ident = #expr))
+        })
+        .collect();
+
+    // Preludes (use statements) still go outside the macro invocation
+    let preludes: Vec<_> = output
+        .captures
+        .iter()
+        .filter_map(|capture| capture.tokens.prelude.clone())
+        .collect();
+
+    // Path arguments: `__sl_pN = resolved::path`
+    let named_path_args: Vec<proc_macro2::TokenStream> = path_args
+        .iter()
+        .enumerate()
+        .map(|(idx, p)| {
+            let name = syn::Ident::new(&format!("__sl_p{idx}"), Span::call_site());
+            quote!(#name = #p)
+        })
+        .collect();
+
+    let all_args: Vec<_> = named_path_args
+        .iter()
+        .map(|p| quote!(#p))
+        .chain(free_var_args.iter().map(|v| quote!(#v)))
+        .collect();
+
+    // Build the macro invocation path.
+    let macro_invocation = {
+        let literal_body: proc_macro2::TokenStream = output.tokens.parse().unwrap();
+        let final_crate = proc_macro_crate::crate_name(output.crate_name)
+            .unwrap_or_else(|_| panic!("Expected `{}` package in Cargo.toml", output.crate_name));
+        match final_crate {
+            FoundCrate::Itself => {
+                let pkg_name_underscore = output.pkg_name.replace('-', "_");
+
+                let module_path_without_crate = output
+                    .module_path
+                    .strip_prefix(&pkg_name_underscore)
+                    .and_then(|s| s.strip_prefix("::"))
+                    .unwrap_or("");
+
+                let is_inside_crate = output.module_path == pkg_name_underscore
+                    || output
+                        .module_path
+                        .starts_with(&format!("{pkg_name_underscore}::"));
+
+                if !is_inside_crate
+                    || runtime_support::is_test_module(output.crate_name, module_path_without_crate)
+                {
+                    // Build fallback body: replace __sl_pN idents with resolved paths
+                    let free_var_let_bindings: Vec<proc_macro2::TokenStream> = output
+                        .captures
+                        .iter()
+                        .filter_map(|capture| {
+                            let ident = syn::Ident::new(capture.ident, Span::call_site());
+                            capture
+                                .tokens
+                                .expr
+                                .as_ref()
+                                .map(|expr| quote!(let #ident = #expr;))
+                        })
+                        .collect();
+                    let mut fallback_expr: syn::Expr = syn::parse_str(output.tokens).unwrap();
+                    // Replace __sl_pN path prefixes with resolved paths
+                    struct MetavarRewriter<'a> {
+                        path_args: &'a [proc_macro2::TokenStream],
+                    }
+                    impl VisitMut for MetavarRewriter<'_> {
+                        fn visit_path_mut(&mut self, path: &mut syn::Path) {
+                            if let Some(first) = path.segments.first()
+                                && let Some(idx_str) = first.ident.to_string().strip_prefix("__sl_p")
+                                && let Ok(idx) = idx_str.parse::<usize>()
+                                && let Some(resolved) = self.path_args.get(idx)
+                            {
+                                let resolved_path: syn::Path =
+                                    syn::parse2(resolved.clone()).unwrap();
+                                let remaining: Vec<_> =
+                                    path.segments.iter().skip(1).cloned().collect();
+                                *path = resolved_path;
+                                for seg in remaining {
+                                    path.segments.push(seg);
+                                }
+                            }
+                            syn::visit_mut::visit_path_mut(self, path);
+                        }
+
+                        fn visit_macro_mut(&mut self, i: &mut syn::Macro) {
+                            attempt_transform_macro::attempt_transform_macro(self, i);
+                        }
+                    }
+                    MetavarRewriter { path_args: &path_args }.visit_expr_mut(&mut fallback_expr);
+                    quote!({
+                        #(#free_var_let_bindings)*
+                        #fallback_expr
+                    })
+                } else {
+                    quote!(
+                        #[allow(unused_imports)]
+                        use crate::*;
+                        #macro_ident!([#(#all_args,)*] [#literal_body])
+                    )
+                }
+            }
+            FoundCrate::Name(name) => {
+                let crate_ident = syn::Ident::new(&name, Span::call_site());
+                quote!(#crate_ident::#macro_ident!([#(#all_args,)*] [#literal_body]))
+            }
+        }
+    };
+
+    if let Some(module_path) = &module_path {
+        quote!({
+            use #final_crate_root::__staged::__deps::*;
+            use #final_crate_root::__staged::#module_path::*;
+            #(#preludes)*
+            #macro_invocation
+        })
+    } else {
+        quote!({
+            use #final_crate_root::__staged::__deps::*;
+            use #final_crate_root::__staged::*;
+            #(#preludes)*
+            #macro_invocation
+        })
+    }
+}
+
+/// Invokes a quoted closure, capturing its output via catch_unwind.
+fn invoke_quoted<T, Ctx, Props>(
+    f: impl FnOnce(&Ctx, &mut QuotedOutput, &mut Option<Props>) -> T,
+    ctx: &Ctx,
+) -> (QuotedOutput, Props) {
+    static GLOBAL_HOOK_MUTEX: parking_lot::ReentrantMutex<()> =
+        parking_lot::ReentrantMutex::new(());
+
+    let mut output = QuotedOutput {
+        module_path: "",
+        crate_name: "",
+        tokens: "",
+        captures: Vec::new(),
+        macro_name: None,
+        relative_paths: &[],
+        pkg_name: "",
+    };
+
+    let mut props = None;
+
+    let output_ref = std::panic::AssertUnwindSafe(&mut output);
+    let props_ref = std::panic::AssertUnwindSafe(&mut props);
+    let _guard = GLOBAL_HOOK_MUTEX.lock();
+    let prev_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+        let output_ref = output_ref;
+        let props_ref = props_ref;
+        std::mem::forget(f(ctx, output_ref.0, props_ref.0));
+    }));
+    std::panic::set_hook(prev_hook);
+    drop(_guard);
+
+    (output, props.unwrap())
+}
+
 impl<T, Ctx, Props, F: for<'b> FnOnce(&'b Ctx, &mut QuotedOutput, &mut Option<Props>) -> T>
     FreeVariableWithContextWithProps<Ctx, Props> for F
 {
     type O = T;
 
     fn to_tokens(self, ctx: &Ctx) -> (QuoteTokens, Props) {
-        static GLOBAL_HOOK_MUTEX: parking_lot::ReentrantMutex<()> =
-            parking_lot::ReentrantMutex::new(());
-
-        let mut output = QuotedOutput {
-            module_path: "",
-            crate_name: "",
-            tokens: "",
-            captures: Vec::new(),
-        };
-
-        let mut props = None;
-
-        // The closure panics after setting output fields instead of returning
-        // a T value (which would require UB to construct). We catch the panic.
-        let output_ref = std::panic::AssertUnwindSafe(&mut output);
-        let props_ref = std::panic::AssertUnwindSafe(&mut props);
-        let _guard = GLOBAL_HOOK_MUTEX.lock();
-        let prev_hook = std::panic::take_hook();
-        std::panic::set_hook(Box::new(|_| {}));
-        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
-            let output_ref = output_ref;
-            let props_ref = props_ref;
-            std::mem::forget(self(ctx, output_ref.0, props_ref.0));
-        }));
-        std::panic::set_hook(prev_hook);
-        drop(_guard);
-
-        let instantiated_free_variables = output.captures.iter().flat_map(|capture| {
-            let ident = syn::Ident::new(capture.ident, Span::call_site());
-            capture
-                .tokens
-                .prelude
-                .iter()
-                .map(|prelude| quote!(#prelude))
-                .chain(
-                    capture
-                        .tokens
-                        .expr
-                        .iter()
-                        .map(move |value| quote!(let #ident = #value;)),
-                )
-        });
-
-        let final_crate_root = get_final_crate_name(output.crate_name);
-
-        let module_path: syn::Path = syn::parse_str(output.module_path).unwrap();
-        let module_path_segments = module_path
-            .segments
-            .iter()
-            .skip(1)
-            .cloned()
-            .collect::<Vec<_>>();
-        let module_path = if module_path_segments.is_empty()
-            || module_path_segments
-                .iter()
-                .any(|segment| segment.ident.to_string().starts_with("__doctest"))
-        {
-            None
-        } else {
-            Some(syn::Path {
-                leading_colon: None,
-                segments: syn::punctuated::Punctuated::from_iter(module_path_segments),
-            })
-        };
-
-        let mut expr: syn::Expr = syn::parse_str(output.tokens).unwrap();
-        rewrite_paths::RewritePaths {
-            crate_root_path: syn::parse_quote!(#final_crate_root::__staged),
-            module_path: module_path
-                .clone()
-                .map(|module_path| syn::parse_quote!(#final_crate_root::__staged::#module_path)),
-        }
-        .visit_expr_mut(&mut expr);
-
-        let with_env = if let Some(module_path) = module_path {
-            quote!({
-                use #final_crate_root::__staged::__deps::*;
-                use #final_crate_root::__staged::#module_path::*;
-                #(#instantiated_free_variables)*
-                #expr
-            })
-        } else {
-            quote!({
-                use #final_crate_root::__staged::__deps::*;
-                use #final_crate_root::__staged::*;
-                #(#instantiated_free_variables)*
-                #expr
-            })
-        };
+        let (output, props) = invoke_quoted(self, ctx);
+        let with_env = splice_quoted_output(&output);
 
         (
             QuoteTokens {
                 prelude: None,
                 expr: Some(with_env),
             },
-            props.unwrap(),
+            props,
         )
     }
 }

@@ -105,6 +105,10 @@ pub fn gen_macro(staged_path: &Path, crate_name: &str) {
     println!("cargo::rustc-check-cfg=cfg(stageleft_runtime)");
     println!("cargo::rerun-if-changed=build.rs");
     println!("cargo::rustc-env=STAGELEFT_FINAL_CRATE_NAME={crate_name}");
+    println!(
+        "cargo::rustc-env=STAGELEFT_FINAL_CRATE_MANIFEST_DIR={}",
+        staged_path_absolute.display()
+    );
     println!("cargo::rustc-cfg=stageleft_macro");
 
     println!(
@@ -598,8 +602,10 @@ pub fn gen_staged_trybuild(
     flow_lib_pub
 }
 
+/// Combined function that generates staged deps, test modules, and optionally lib_pub.
+/// Parses the source tree only once.
 #[doc(hidden)]
-pub fn gen_staged_pub() {
+pub fn gen_staged(gen_pub: bool) {
     let out_dir = env::var_os("OUT_DIR").unwrap();
 
     let raw_toml_manifest = fs::read_to_string(Path::new("Cargo.toml"))
@@ -612,27 +618,31 @@ pub fn gen_staged_pub() {
         .and_then(|lib| lib.get("path"))
         .and_then(|path| path.as_str());
 
-    let flow_lib_pub = gen_staged_mod(
-        maybe_custom_lib_path
-            .map(Path::new)
-            .unwrap_or_else(|| Path::new("src/lib.rs")),
-        parse_quote!(crate),
-        None,
-        false,
-    );
+    let lib_path = maybe_custom_lib_path
+        .map(Path::new)
+        .unwrap_or_else(|| Path::new("src/lib.rs"));
 
-    fs::write(
-        Path::new(&out_dir).join("lib_pub.rs"),
-        prettyplease::unparse(&flow_lib_pub),
-    )
-    .unwrap();
-    println!("cargo::rerun-if-changed=src");
-}
+    // Parse source once
+    let flow_lib = syn_inline_mod::parse_and_inline_modules(lib_path);
 
-#[doc(hidden)]
-pub fn gen_staged_deps() {
-    let out_dir = env::var_os("OUT_DIR").unwrap();
+    // Generate lib_pub.rs if requested
+    if gen_pub {
+        let flow_lib_pub = gen_staged_mod(
+            lib_path,
+            parse_quote!(crate),
+            None,
+            false,
+        );
 
+        fs::write(
+            Path::new(&out_dir).join("lib_pub.rs"),
+            prettyplease::unparse(&flow_lib_pub),
+        )
+        .unwrap();
+        println!("cargo::rerun-if-changed=src");
+    }
+
+    // Generate staged_deps.rs
     // Remove `_tool` suffix.
     let main_pkg_name = env!("CARGO_PKG_NAME").rsplit_once(['-', '_']).unwrap().0;
     let stageleft_crate = proc_macro_crate::crate_name(main_pkg_name).unwrap_or_else(|_| {
@@ -653,6 +663,50 @@ pub fn gen_staged_deps() {
         prettyplease::unparse(&parse_quote!(#deps_file)),
     )
     .unwrap();
+
+    // Collect test modules for fallback detection at splice time
+    struct TestModCollector {
+        current_mod: Vec<String>,
+        test_modules: Vec<String>,
+    }
+
+    impl<'a> Visit<'a> for TestModCollector {
+        fn visit_item_mod(&mut self, i: &'a syn::ItemMod) {
+            let is_test_mod = i
+                .attrs
+                .iter()
+                .any(|a| a.to_token_stream().to_string() == "# [cfg (test)]");
+
+            self.current_mod.push(i.ident.to_string());
+
+            if is_test_mod {
+                self.test_modules.push(self.current_mod.join("::"));
+            }
+
+            syn::visit::visit_item_mod(self, i);
+            self.current_mod.pop();
+        }
+    }
+
+    let mut collector = TestModCollector {
+        current_mod: Vec::new(),
+        test_modules: Vec::new(),
+    };
+    Visit::visit_file(&mut collector, &flow_lib);
+
+    let test_mod_strs = &collector.test_modules;
+    let crate_name_str = env::var("CARGO_PKG_NAME").unwrap().replace('-', "_");
+
+    let registration_body = quote::quote! {
+        (#crate_name_str, &[#(#test_mod_strs),*])
+    };
+
+    fs::write(
+        Path::new(&out_dir).join("test_modules.rs"),
+        registration_body.to_string(),
+    )
+    .unwrap();
+    println!("cargo::rerun-if-changed=src");
 }
 
 #[macro_export]
@@ -663,6 +717,10 @@ macro_rules! gen_final {
         println!("cargo::rustc-check-cfg=cfg(stageleft_trybuild)");
         println!("cargo::rustc-check-cfg=cfg(feature, values(\"stageleft_macro_entrypoint\"))");
         println!("cargo::rustc-cfg=stageleft_runtime");
+        println!(
+            "cargo::rustc-env=STAGELEFT_FINAL_CRATE_MANIFEST_DIR={}",
+            std::env::var("CARGO_MANIFEST_DIR").unwrap()
+        );
 
         println!("cargo::rerun-if-changed=Cargo.toml");
         println!("cargo::rerun-if-changed=build.rs");
@@ -672,16 +730,16 @@ macro_rules! gen_final {
             unexpected_cfgs,
             reason = "Macro entrypoints must define the stageleft_macro_entrypoint feature"
         )]
-        {
-            if cfg!(feature = "stageleft_macro_entrypoint") {
-                $crate::gen_staged_pub()
-            } else if std::env::var("STAGELEFT_TRYBUILD_BUILD_STAGED").is_ok() {
-                println!("cargo::rustc-cfg=stageleft_trybuild");
-                $crate::gen_staged_pub()
-            }
-        }
+        let gen_pub = if cfg!(feature = "stageleft_macro_entrypoint") {
+            true
+        } else if std::env::var("STAGELEFT_TRYBUILD_BUILD_STAGED").is_ok() {
+            println!("cargo::rustc-cfg=stageleft_trybuild");
+            true
+        } else {
+            false
+        };
 
-        $crate::gen_staged_deps()
+        $crate::gen_staged(gen_pub);
     };
 }
 

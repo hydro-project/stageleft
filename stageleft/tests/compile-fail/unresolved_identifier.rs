@@ -1,3 +1,4 @@
+#![allow(unexpected_cfgs)]
 use stageleft::*;
 
 fn main() {

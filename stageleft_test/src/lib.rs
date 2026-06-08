@@ -104,11 +104,14 @@ fn ref_str<'a>(s: &str) -> impl Quoted<'a, &'static str> {
     q!(s)
 }
 
+pub(crate) mod backtrace_test;
+
 #[cfg(stageleft_runtime)]
 #[cfg(test)]
 mod tests {
     use super::*;
     use stageleft::QuotedWithContext;
+    use stageleft::internal::syn;
 
     #[test]
     fn test_raise_to_power_of_two() {
@@ -181,5 +184,41 @@ mod tests {
     fn test_quoting() {
         let quoted = q!(1 + 2);
         let _ = quoted.splice_typed_ctx(&());
+    }
+
+    #[test]
+    fn test_splice_snapshot_simple() {
+        let quoted = q!(1 + 2);
+        let expr = quoted.splice_untyped_ctx(&());
+        let file: syn::File = syn::parse_quote!(fn main() { #expr });
+        insta::assert_snapshot!(prettyplease::unparse(&file));
+    }
+
+    #[test]
+    fn test_splice_snapshot_free_var() {
+        let x = 42i32;
+        let quoted = q!(x + 1);
+        let expr = quoted.splice_untyped_ctx(&());
+        let file: syn::File = syn::parse_quote!(fn main() { #expr });
+        insta::assert_snapshot!(prettyplease::unparse(&file));
+    }
+
+    #[test]
+    fn test_splice_snapshot_crate_path() {
+        let expr = QuotedWithContext::splice_untyped_ctx(
+            crate_paths(stageleft::QuotedContext::create()),
+            &(),
+        );
+        let file: syn::File = syn::parse_quote!(fn main() { #expr });
+        insta::assert_snapshot!(prettyplease::unparse(&file));
+    }
+
+    #[test]
+    fn test_crate_path_in_macro() {
+        // This tests the fallback path (test module) with a relative path inside a macro call
+        let quoted = q!(assert!(crate::my_top_level_function()));
+        let expr = quoted.splice_untyped_ctx(&());
+        let file: syn::File = syn::parse_quote!(fn main() { #expr });
+        insta::assert_snapshot!(prettyplease::unparse(&file));
     }
 }
