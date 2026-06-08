@@ -12,15 +12,19 @@ static PRIVATE_REEXPORTS: ReexportsSet = LazyLock::new(|| {
         (vec!["alloc".into()], vec!["std".into()]),
         (
             vec!["core".into(), "ops".into(), "range".into()],
-            vec!["std".into(), "ops".into()],
+            vec!["core".into(), "ops".into()],
         ),
         (
             vec!["core".into(), "slice".into(), "iter".into()],
-            vec!["std".into(), "slice".into()],
+            vec!["core".into(), "slice".into()],
         ),
         (
             vec!["core".into(), "iter".into(), "adapters".into(), "*".into()],
-            vec!["std".into(), "iter".into()],
+            vec!["core".into(), "iter".into()],
+        ),
+        (
+            vec!["core".into(), "iter".into(), "sources".into(), "*".into()],
+            vec!["core".into(), "iter".into()],
         ),
         (
             vec![
