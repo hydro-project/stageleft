@@ -823,7 +823,10 @@ fn splice_quoted_output(output: &QuotedOutput) -> proc_macro2::TokenStream {
                         .starts_with(&format!("{pkg_name_underscore}::"));
 
                 if !is_inside_crate
-                    || runtime_support::is_test_module(output.crate_name, module_path_without_crate)
+                    || runtime_support::is_test_module(
+                        &pkg_name_underscore,
+                        module_path_without_crate,
+                    )
                 {
                     // Build fallback body: replace __sl_pN idents with resolved paths
                     let free_var_let_bindings: Vec<proc_macro2::TokenStream> = output
@@ -846,7 +849,8 @@ fn splice_quoted_output(output: &QuotedOutput) -> proc_macro2::TokenStream {
                     impl VisitMut for MetavarRewriter<'_> {
                         fn visit_path_mut(&mut self, path: &mut syn::Path) {
                             if let Some(first) = path.segments.first()
-                                && let Some(idx_str) = first.ident.to_string().strip_prefix("__sl_p")
+                                && let Some(idx_str) =
+                                    first.ident.to_string().strip_prefix("__sl_p")
                                 && let Ok(idx) = idx_str.parse::<usize>()
                                 && let Some(resolved) = self.path_args.get(idx)
                             {
@@ -866,7 +870,10 @@ fn splice_quoted_output(output: &QuotedOutput) -> proc_macro2::TokenStream {
                             attempt_transform_macro::attempt_transform_macro(self, i);
                         }
                     }
-                    MetavarRewriter { path_args: &path_args }.visit_expr_mut(&mut fallback_expr);
+                    MetavarRewriter {
+                        path_args: &path_args,
+                    }
+                    .visit_expr_mut(&mut fallback_expr);
                     quote!({
                         #(#free_var_let_bindings)*
                         #fallback_expr
