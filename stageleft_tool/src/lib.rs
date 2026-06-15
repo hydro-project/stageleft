@@ -627,12 +627,7 @@ pub fn gen_staged(gen_pub: bool) {
 
     // Generate lib_pub.rs if requested
     if gen_pub {
-        let flow_lib_pub = gen_staged_mod(
-            lib_path,
-            parse_quote!(crate),
-            None,
-            false,
-        );
+        let flow_lib_pub = gen_staged_mod(lib_path, parse_quote!(crate), None, false);
 
         fs::write(
             Path::new(&out_dir).join("lib_pub.rs"),

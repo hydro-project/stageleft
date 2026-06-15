@@ -51,7 +51,6 @@ impl Parse for QInput {
     }
 }
 
-
 /// Rewrites a token stream to replace path metavar idents with `$ident` references
 /// for use inside a macro_rules! body.
 fn rewrite_body_for_macro(
@@ -128,123 +127,127 @@ pub fn q_impl(root: TokenStream, toks: TokenStream) -> TokenStream {
     let relative_paths = visitor.relative_paths;
 
     // Skip macro generation in Rust Analyzer mode for performance
-    let (hidden_macro, macro_name, relative_path_strs, tokens_str): (TokenStream, Option<String>, Vec<String>, String) =
-        if is_rust_analyzer {
-            (quote!(), None, vec![], String::new())
+    let (hidden_macro, macro_name, relative_path_strs, tokens_str): (
+        TokenStream,
+        Option<String>,
+        Vec<String>,
+        String,
+    ) = if is_rust_analyzer {
+        (quote!(), None, vec![], String::new())
+    } else {
+        // Generate a hash for the hidden macro name using source file + span location + content
+        let span = toks
+            .into_iter()
+            .next()
+            .map(|t| t.span())
+            .unwrap_or_else(Span::call_site);
+        let start = span.start();
+        // Make the file path relative to the final crate's manifest dir for portability.
+        let file_path = std::path::PathBuf::from(span.file());
+        let canonical_file = file_path.canonicalize().unwrap_or(file_path);
+        let manifest_dir = std::path::PathBuf::from(
+            std::env::var("STAGELEFT_FINAL_CRATE_MANIFEST_DIR")
+                .or_else(|_| std::env::var("CARGO_MANIFEST_DIR"))
+                .expect("STAGELEFT_FINAL_CRATE_MANIFEST_DIR or CARGO_MANIFEST_DIR must be set"),
+        );
+        let canonical_manifest_dir = manifest_dir.canonicalize().unwrap_or(manifest_dir);
+        let relative_file = canonical_file
+            .strip_prefix(&canonical_manifest_dir)
+            .unwrap_or(&canonical_file)
+            .display()
+            .to_string();
+        // Build a deterministic macro name from the relative file path + location.
+        // Normalize to valid Rust identifier characters.
+        let normalized_file: String = relative_file
+            .chars()
+            .map(|c| if c.is_alphanumeric() { c } else { '_' })
+            .collect();
+        let macro_name = format!(
+            "__stageleft_quote_{normalized_file}_{}_{}",
+            start.line, start.column
+        );
+        let macro_name_ident = syn::Ident::new(&macro_name, Span::call_site());
+
+        // Build the hidden macro body: add $ prefixes to path metavar idents
+        let macro_body_toks = if !relative_paths.is_empty() {
+            rewrite_body_for_macro(&rewritten_toks, &relative_paths)
         } else {
-            // Generate a hash for the hidden macro name using source file + span location + content
-            let span = toks
-                .into_iter()
-                .next()
-                .map(|t| t.span())
-                .unwrap_or_else(Span::call_site);
-            let start = span.start();
-            // Make the file path relative to the final crate's manifest dir for portability.
-            let file_path = std::path::PathBuf::from(span.file());
-            let canonical_file = file_path.canonicalize().unwrap_or(file_path);
-            let manifest_dir = std::path::PathBuf::from(
-                std::env::var("STAGELEFT_FINAL_CRATE_MANIFEST_DIR")
-                    .or_else(|_| std::env::var("CARGO_MANIFEST_DIR"))
-                    .expect("STAGELEFT_FINAL_CRATE_MANIFEST_DIR or CARGO_MANIFEST_DIR must be set"),
-            );
-            let canonical_manifest_dir = manifest_dir.canonicalize().unwrap_or(manifest_dir);
-            let relative_file = canonical_file
-                .strip_prefix(&canonical_manifest_dir)
-                .unwrap_or(&canonical_file)
-                .display()
-                .to_string();
-            // Build a deterministic macro name from the relative file path + location.
-            // Normalize to valid Rust identifier characters.
-            let normalized_file: String = relative_file
-                .chars()
-                .map(|c| if c.is_alphanumeric() { c } else { '_' })
-                .collect();
-            let macro_name = format!(
-                "__stageleft_quote_{normalized_file}_{}_{}",
-                start.line, start.column
-            );
-            let macro_name_ident = syn::Ident::new(&macro_name, Span::call_site());
-
-            // Build the hidden macro body: add $ prefixes to path metavar idents
-            let macro_body_toks = if !relative_paths.is_empty() {
-                rewrite_body_for_macro(&rewritten_toks, &relative_paths)
-            } else {
-                rewritten_toks.clone()
-            };
-
-            // Generate macro parameter patterns for paths: `__sl_p0 = $($__sl_p0:ident)::*`
-            let path_param_patterns: Vec<TokenStream> = {
-                let mut sorted: Vec<_> = relative_paths.iter().collect();
-                sorted.sort_by_key(|(_, idx)| *idx);
-                sorted
-                    .iter()
-                    .map(|(_, idx)| {
-                        let metavar = syn::Ident::new(&format!("__sl_p{idx}"), Span::call_site());
-                        quote!(#metavar = $($#metavar:ident)::*)
-                    })
-                    .collect()
-            };
-
-            // Generate macro parameter patterns for free variables: `x__free = $x__free:expr`
-            let free_var_param_patterns: Vec<TokenStream> = visitor
-                .free_variables
-                .iter()
-                .map(|i| {
-                    let i_free = syn::Ident::new(&format!("{i}__free"), Span::call_site());
-                    quote!(#i_free = $#i_free:expr)
-                })
-                .collect();
-
-            // All macro params: paths first, then free variables, then literal body match
-            let all_macro_params: Vec<&TokenStream> = path_param_patterns
-                .iter()
-                .chain(free_var_param_patterns.iter())
-                .collect();
-
-            // Generate let bindings for free variables inside the macro body
-            let free_var_let_bindings: Vec<TokenStream> = visitor
-                .free_variables
-                .iter()
-                .map(|i| {
-                    let i_free = syn::Ident::new(&format!("{i}__free"), Span::call_site());
-                    quote!(let #i_free = $#i_free;)
-                })
-                .collect();
-
-            // The literal body match is the path-rewritten tokens
-            let literal_body = &rewritten_toks;
-
-            let hidden_macro = quote! {
-                #[allow(unexpected_cfgs, non_local_definitions, clippy::crate_in_macro_def)]
-                #[cfg_attr(not(stageleft_macro), macro_export)]
-                #[doc(hidden)]
-                macro_rules! #macro_name_ident {
-                    ([#(#all_macro_params,)*] [#literal_body]) => {
-                        {
-                            #[allow(non_snake_case)]
-                            {
-                                #(#free_var_let_bindings)*
-                                #macro_body_toks
-                            }
-                        }
-                    };
-                }
-            };
-
-            // Serialize relative paths for the splice site (sorted by index)
-            let relative_path_strs: Vec<&String> = {
-                let mut sorted: Vec<_> = relative_paths.iter().collect();
-                sorted.sort_by_key(|(_, idx)| *idx);
-                sorted.iter().map(|(path_str, _)| *path_str).collect()
-            };
-
-            (
-                hidden_macro,
-                Some(macro_name),
-                relative_path_strs.into_iter().cloned().collect(),
-                rewritten_toks.to_string(),
-            )
+            rewritten_toks.clone()
         };
+
+        // Generate macro parameter patterns for paths: `__sl_p0 = $($__sl_p0:ident)::*`
+        let path_param_patterns: Vec<TokenStream> = {
+            let mut sorted: Vec<_> = relative_paths.iter().collect();
+            sorted.sort_by_key(|(_, idx)| *idx);
+            sorted
+                .iter()
+                .map(|(_, idx)| {
+                    let metavar = syn::Ident::new(&format!("__sl_p{idx}"), Span::call_site());
+                    quote!(#metavar = $($#metavar:ident)::*)
+                })
+                .collect()
+        };
+
+        // Generate macro parameter patterns for free variables: `x__free = $x__free:expr`
+        let free_var_param_patterns: Vec<TokenStream> = visitor
+            .free_variables
+            .iter()
+            .map(|i| {
+                let i_free = syn::Ident::new(&format!("{i}__free"), Span::call_site());
+                quote!(#i_free = $#i_free:expr)
+            })
+            .collect();
+
+        // All macro params: paths first, then free variables, then literal body match
+        let all_macro_params: Vec<&TokenStream> = path_param_patterns
+            .iter()
+            .chain(free_var_param_patterns.iter())
+            .collect();
+
+        // Generate let bindings for free variables inside the macro body
+        let free_var_let_bindings: Vec<TokenStream> = visitor
+            .free_variables
+            .iter()
+            .map(|i| {
+                let i_free = syn::Ident::new(&format!("{i}__free"), Span::call_site());
+                quote!(let #i_free = $#i_free;)
+            })
+            .collect();
+
+        // The literal body match is the path-rewritten tokens
+        let literal_body = &rewritten_toks;
+
+        let hidden_macro = quote! {
+            #[allow(unexpected_cfgs, non_local_definitions, clippy::crate_in_macro_def)]
+            #[cfg_attr(not(stageleft_macro), macro_export)]
+            #[doc(hidden)]
+            macro_rules! #macro_name_ident {
+                ([#(#all_macro_params,)*] [#literal_body]) => {
+                    {
+                        #[allow(non_snake_case)]
+                        {
+                            #(#free_var_let_bindings)*
+                            #macro_body_toks
+                        }
+                    }
+                };
+            }
+        };
+
+        // Serialize relative paths for the splice site (sorted by index)
+        let relative_path_strs: Vec<&String> = {
+            let mut sorted: Vec<_> = relative_paths.iter().collect();
+            sorted.sort_by_key(|(_, idx)| *idx);
+            sorted.iter().map(|(path_str, _)| *path_str).collect()
+        };
+
+        (
+            hidden_macro,
+            Some(macro_name),
+            relative_path_strs.into_iter().cloned().collect(),
+            rewritten_toks.to_string(),
+        )
+    };
 
     // Get fn() -> T pointers BEFORE the if block so they're in scope for both branches.
     let uninit_fn_bindings = visitor.free_variables.iter().map(|i| {
