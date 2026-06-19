@@ -1,4 +1,3 @@
-use core::panic;
 use std::marker::PhantomData;
 
 use internal::QuotedOutput;
@@ -910,6 +909,8 @@ fn splice_quoted_output(output: &QuotedOutput) -> proc_macro2::TokenStream {
     }
 }
 
+const EXPECTED_PANIC_MESSAGE: &str = "stageleft: q!() closure completed";
+
 /// Invokes a quoted closure, capturing its output via catch_unwind.
 fn invoke_quoted<T, Ctx, Props>(
     f: impl FnOnce(&Ctx, &mut QuotedOutput, &mut Option<Props>) -> T,
@@ -933,15 +934,38 @@ fn invoke_quoted<T, Ctx, Props>(
     let output_ref = std::panic::AssertUnwindSafe(&mut output);
     let props_ref = std::panic::AssertUnwindSafe(&mut props);
     let _guard = GLOBAL_HOOK_MUTEX.lock();
-    let prev_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(|_| {}));
-    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+    let prev_hook = std::sync::Arc::new(std::panic::take_hook());
+    let prev_hook_clone = prev_hook.clone();
+    std::panic::set_hook(Box::new(move |info| {
+        let is_expected = info
+            .payload()
+            .downcast_ref::<&str>()
+            .is_some_and(|s| *s == EXPECTED_PANIC_MESSAGE);
+        if !is_expected {
+            prev_hook_clone(info);
+        }
+    }));
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
         let output_ref = output_ref;
         let props_ref = props_ref;
         std::mem::forget(f(ctx, output_ref.0, props_ref.0));
     }));
-    std::panic::set_hook(prev_hook);
+    let _ = std::panic::take_hook();
+    std::panic::set_hook(
+        std::sync::Arc::try_unwrap(prev_hook)
+            .unwrap_or_else(|_| panic!("prev_hook Arc should have no other references")),
+    );
     drop(_guard);
+
+    if let Err(payload) = result {
+        let is_expected = payload
+            .downcast_ref::<&str>()
+            .is_some_and(|s| *s == EXPECTED_PANIC_MESSAGE);
+
+        if !is_expected {
+            std::panic::resume_unwind(payload);
+        }
+    }
 
     (output, props.unwrap())
 }
@@ -1010,5 +1034,41 @@ impl<T, Ctx> FreeVariableWithContextWithProps<Ctx, ()> for RuntimeData<T> {
             },
             (),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A type with a buggy FreeVariable impl that panics with a non-stageleft message.
+    struct PanickingFreeVar;
+
+    impl<Ctx> FreeVariableWithContextWithProps<Ctx, ()> for PanickingFreeVar {
+        type O = i32;
+
+        fn to_tokens(self, _ctx: &Ctx) -> (QuoteTokens, ()) {
+            panic!("buggy free variable implementation")
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "buggy free variable implementation")]
+    fn panicking_free_variable_propagates() {
+        let f = |_ctx: &(), output: &mut QuotedOutput, props: &mut Option<()>| -> i32 {
+            output.captures.push(internal::Capture {
+                ident: "x__free",
+                tokens: FreeVariableWithContextWithProps::to_tokens(PanickingFreeVar, _ctx).0,
+            });
+
+            output.module_path = "test";
+            output.crate_name = "test";
+            output.tokens = "";
+            *props = Some(());
+
+            panic!("stageleft: q!() closure completed");
+        };
+
+        invoke_quoted(f, &());
     }
 }
