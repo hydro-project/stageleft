@@ -7,6 +7,9 @@ pub(crate) mod features;
 pub(crate) mod property_example;
 pub(crate) mod submodule;
 
+#[expect(unused, reason = "for testing ambiguous top-level crate imports")]
+use submodule::PublicStruct;
+
 static GLOBAL_VAR: i32 = 42;
 
 mod private {
@@ -169,7 +172,8 @@ mod tests {
 
     #[test]
     fn test_submodule_public_struct() {
-        let result: submodule::PublicStruct = submodule::public_struct!();
+        #[expect(unused_qualifications, reason = "don't want to use super import")]
+        let result: super::submodule::PublicStruct = submodule::public_struct!();
         assert_eq!(result.a, 1);
     }
 
