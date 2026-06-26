@@ -2,6 +2,7 @@
 source: stageleft_test_no_entry/tests/codegen_snapshot.rs
 expression: "include_str!(concat!(env!(\"OUT_DIR\"), stageleft::PATH_SEPARATOR!(),\n\"lib_pub.rs\"))"
 ---
+pub use crate::*;
 pub use crate::MyKey;
 /// Test that `stageleft::export` prevents splitbrain of `MyKey` type.
 #[expect(dead_code, reason = "test code")]

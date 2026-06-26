@@ -131,22 +131,21 @@ struct GenFinalPubVisitor {
     /// true, then disables `pub use` [re-exporting from non-`pub` ancestor modules](https://doc.rust-lang.org/reference/visibility-and-privacy.html#r-vis.access).
     is_staged_separate: bool,
 
-    /// All `#[macro_export]` declarative macros encountered, to be re-exported at the top `__staged` module due to the
-    /// strange way `#[macro_export]` works.
-    all_macros: Vec<syn::Ident>,
+    crate_root_modules: Vec<String>,
 }
 impl GenFinalPubVisitor {
     pub fn new(
         orig_crate_ident: syn::Path,
         test_mode_feature: Option<String>,
         is_staged_separate: bool,
+        crate_root_modules: Vec<String>,
     ) -> Self {
         Self {
             current_mod: orig_crate_ident,
             stack_is_pub: Vec::new(),
             test_mode_feature,
             is_staged_separate,
-            all_macros: Vec::new(),
+            crate_root_modules,
         }
     }
 
@@ -260,6 +259,19 @@ impl VisitMut for GenFinalPubVisitor {
 
     fn visit_item_use_mut(&mut self, i: &mut syn::ItemUse) {
         i.vis = parse_quote!(pub);
+
+        if self.current_mod.get_ident().is_some_and(|i| i == "crate")
+            && let syn::UseTree::Path(p) = &mut i.tree
+            && self.crate_root_modules.contains(&p.ident.to_string())
+        {
+            let orig_path = p.clone();
+            *p = syn::UsePath {
+                ident: syn::Ident::new("self", Span::call_site()),
+                colon2_token: Default::default(),
+                tree: Box::new(syn::UseTree::Path(orig_path)),
+            };
+        }
+
         syn::visit_mut::visit_item_use_mut(self, i);
     }
 
@@ -340,8 +352,7 @@ impl VisitMut for GenFinalPubVisitor {
                     .iter()
                     .any(|a| a.to_token_stream().to_string() == "# [macro_export]")
                 {
-                    // Re-export macro at top-level later.
-                    self.all_macros.push(m.ident.as_ref().unwrap().clone());
+                    // Macro is already exported by the original
                     *i = syn::Item::Verbatim(Default::default());
                     return;
                 }
@@ -555,22 +566,29 @@ fn gen_staged_mod(
     );
 
     let mut flow_lib_pub = syn_inline_mod::parse_and_inline_modules(lib_path);
+    let crate_root_modules = flow_lib_pub
+        .items
+        .iter()
+        .filter_map(|i| match i {
+            syn::Item::Mod(m) => Some(m.ident.to_string()),
+            _ => None,
+        })
+        .collect();
 
     let mut final_pub_visitor = GenFinalPubVisitor::new(
         orig_crate_path.clone(),
         test_mode_feature,
         is_staged_separate,
+        crate_root_modules,
     );
     final_pub_visitor.visit_file_mut(&mut flow_lib_pub);
 
     // macros exported with `#[macro_export]` are placed at the top-level of the crate,
     // so we need to pull them into the `mod __staged` so that relative imports resolve
     // correctly
-    for exported_macro in final_pub_visitor.all_macros {
-        flow_lib_pub
-            .items
-            .push(parse_quote!(pub use #orig_crate_path::#exported_macro;));
-    }
+    flow_lib_pub
+        .items
+        .insert(0, parse_quote!(pub use #orig_crate_path::*;));
 
     flow_lib_pub
 }

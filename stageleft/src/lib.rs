@@ -879,9 +879,7 @@ fn splice_quoted_output(output: &QuotedOutput) -> proc_macro2::TokenStream {
                     })
                 } else {
                     quote!(
-                        #[allow(unused_imports)]
-                        use crate::*;
-                        #macro_ident!([#(#all_args,)*] [#literal_body])
+                        crate::__staged::#macro_ident!([#(#all_args,)*] [#literal_body])
                     )
                 }
             }
