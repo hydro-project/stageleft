@@ -640,6 +640,16 @@ pub fn gen_staged(gen_pub: bool) {
         .map(Path::new)
         .unwrap_or_else(|| Path::new("src/lib.rs"));
 
+    // Watch the directory containing the library root (usually `src`) so that changes to any
+    // module file trigger a rebuild. Blindly emitting `rerun-if-changed=src` would cause
+    // spurious rebuilds when a custom lib root is used and `src` does not exist, since Cargo
+    // treats missing paths as always-dirty.
+    let watch_path = lib_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty() && parent.is_dir())
+        .unwrap_or(lib_path);
+    println!("cargo::rerun-if-changed={}", watch_path.display());
+
     // Parse source once
     let flow_lib = syn_inline_mod::parse_and_inline_modules(lib_path);
 
@@ -652,7 +662,6 @@ pub fn gen_staged(gen_pub: bool) {
             prettyplease::unparse(&flow_lib_pub),
         )
         .unwrap();
-        println!("cargo::rerun-if-changed=src");
     }
 
     // Generate staged_deps.rs
@@ -719,7 +728,6 @@ pub fn gen_staged(gen_pub: bool) {
         registration_body.to_string(),
     )
     .unwrap();
-    println!("cargo::rerun-if-changed=src");
 }
 
 #[macro_export]
