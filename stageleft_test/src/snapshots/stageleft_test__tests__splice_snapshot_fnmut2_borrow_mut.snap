@@ -1,0 +1,15 @@
+---
+source: stageleft_test/src/lib.rs
+expression: "prettyplease::unparse(&file)"
+---
+fn main() {
+    stageleft::runtime_support::fnmut2_borrow_mut_type_hint::<
+        i32,
+        i32,
+        (),
+    >({
+        use crate::__staged::__deps::*;
+        use crate::__staged::tests::*;
+        { |state: &mut i32, item: i32| *state += item }
+    })
+}
