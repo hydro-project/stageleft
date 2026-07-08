@@ -356,6 +356,19 @@ impl VisitMut for GenFinalPubVisitor {
                     *i = syn::Item::Verbatim(Default::default());
                     return;
                 }
+
+                let is_ctor = m
+                    .mac
+                    .path
+                    .to_token_stream()
+                    .to_string()
+                    .ends_with("ctor :: declarative :: ctor");
+
+                if is_ctor {
+                    // no quoted code depends on this module, so we do not need to copy it
+                    *i = syn::Item::Verbatim(Default::default());
+                    return;
+                }
             }
             syn::Item::Impl(_e) => {
                 // TODO(shadaj): emit impls if the **struct** is private
@@ -534,10 +547,12 @@ fn gen_deps_module(stageleft_name: syn::Ident, manifest_path: &Path) -> syn::Ite
         pub mod __deps {
             #(#deps_reexported)*
 
-            #[#stageleft_name::internal::ctor::ctor(crate_path = #stageleft_name::internal::ctor)]
-            fn __init() {
-                #(#deps_reexported_runtime)*
-                #stageleft_name::internal::add_crate_with_staged(env!("CARGO_PKG_NAME").replace("-", "_"));
+            #stageleft_name::internal::ctor::declarative::ctor! {
+                #[ctor(unsafe)]
+                fn __init() {
+                    #(#deps_reexported_runtime)*
+                    #stageleft_name::internal::add_crate_with_staged(env!("CARGO_PKG_NAME").replace("-", "_"));
+                }
             }
         }
     }

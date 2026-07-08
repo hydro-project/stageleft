@@ -20,7 +20,7 @@ syn = { version = "2", features = [ "full", "visit-mut" ] }
 proc-macro2 = "1"
 proc-macro-crate = "3.3"
 stageleft_macro = { path = "../stageleft_macro", version = "^0.14.3" }
-ctor = "0.4.1"
+ctor = { version = "1.0.8", default-features = false, features = ["std"] }
 parking_lot = "0.12"
 
 [dev-dependencies]

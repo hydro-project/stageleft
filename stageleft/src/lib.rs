@@ -109,14 +109,16 @@ macro_rules! stageleft_no_entry_crate {
         }
 
         #[cfg(test)]
-        #[$crate::internal::ctor::ctor(crate_path = $crate::internal::ctor)]
-        fn __stageleft_register_test_modules() {
-            let (crate_name, modules) = include!(concat!(
-                env!("OUT_DIR"),
-                $crate::PATH_SEPARATOR!(),
-                "test_modules.rs"
-            ));
-            $crate::runtime_support::register_test_modules(crate_name, modules);
+        $crate::internal::ctor::declarative::ctor! {
+            #[ctor(unsafe)]
+            fn __stageleft_register_test_modules() {
+                let (crate_name, modules) = include!(concat!(
+                    env!("OUT_DIR"),
+                    $crate::PATH_SEPARATOR!(),
+                    "test_modules.rs"
+                ));
+                $crate::runtime_support::register_test_modules(crate_name, modules);
+            }
         }
     };
 }
