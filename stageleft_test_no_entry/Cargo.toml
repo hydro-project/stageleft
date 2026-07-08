@@ -17,7 +17,8 @@ stageleft = { path = "../stageleft", version = "^0.15.0" }
 
 slotmap = "1.0.0"
 
-# optional dep with implicit feature (feature "once_cell" auto-created)
+# optional dep with implicit feature (feature "once_cell" auto-created),
+# also enabled by the strong `once_cell/...` reference in `my_strong_ref_feature`
 once_cell = { version = "1.20", optional = true }
 
 # optional dep gated by explicit feature via dep: syntax
@@ -25,6 +26,12 @@ cfg-if = { version = "1.0", optional = true }
 
 [features]
 my_cfg_feature = ["dep:cfg-if"]
+my_strong_ref_feature = ["once_cell/std"]
+my_weak_ref_feature = ["once_cell?/std"]
+
+# target-specific dependencies should be re-exported gated on the target cfg
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [build-dependencies]
 stageleft_tool = { path = "../stageleft_tool", version = "^0.15.0" }
