@@ -11,6 +11,19 @@ use self::free_variable::FreeVariableVisitor;
 mod attempt_transform_macro;
 mod free_variable;
 
+/// Prefix for path metavariable identifiers (`__sl_p0`, `__sl_p1`, ...) that stand in
+/// for relative path prefixes (`crate::`, `self::`, `super::...`) inside a quoted
+/// block. The index `N` in `__sl_pN` is an index into the recorded
+/// `QuotedOutput::relative_paths`, which stores the original prefix so that it can be
+/// resolved to a concrete path at splice time (the stageleft runtime crate has a
+/// matching `PATH_METAVAR_PREFIX` constant).
+pub(crate) const PATH_METAVAR_PREFIX: &str = "__sl_p";
+
+/// Creates the `__sl_pN` metavar ident for the given `relative_paths` index.
+pub(crate) fn path_metavar(idx: usize) -> syn::Ident {
+    syn::Ident::new(&format!("{PATH_METAVAR_PREFIX}{idx}"), Span::call_site())
+}
+
 /// A property annotation like `commutative = Kani` or `idempotent = ManualProof(/** something */)`
 struct PropertyAnnotation {
     name: syn::Ident,
@@ -59,7 +72,7 @@ fn rewrite_body_for_macro(
 ) -> TokenStream {
     let metavar_idents: std::collections::HashSet<String> = relative_paths
         .values()
-        .map(|idx| format!("__sl_p{idx}"))
+        .map(|idx| format!("{PATH_METAVAR_PREFIX}{idx}"))
         .collect();
 
     fn rewrite_stream(
@@ -182,7 +195,7 @@ pub fn q_impl(root: TokenStream, toks: TokenStream) -> TokenStream {
             sorted
                 .iter()
                 .map(|(_, idx)| {
-                    let metavar = syn::Ident::new(&format!("__sl_p{idx}"), Span::call_site());
+                    let metavar = path_metavar(**idx);
                     quote!(#metavar = $($#metavar:ident)::*)
                 })
                 .collect()
@@ -318,7 +331,7 @@ pub fn q_impl(root: TokenStream, toks: TokenStream) -> TokenStream {
                 .iter()
                 .map(|(prefix_str, idx)| {
                     let prefix: syn::Path = syn::parse_str(prefix_str).unwrap();
-                    let name = syn::Ident::new(&format!("__sl_p{idx}"), Span::call_site());
+                    let name = path_metavar(**idx);
                     quote!(#name = #prefix)
                 })
                 .collect()
@@ -500,6 +513,48 @@ mod tests {
 
         test_quote! {
             Err(1)
+        }
+    }
+
+    #[test]
+    fn test_use_rename() {
+        test_quote! {
+            {
+                use std::collections::HashMap as MyMap;
+                MyMap::<u32, u32>::new()
+            }
+        }
+    }
+
+    #[test]
+    fn test_use_group() {
+        test_quote! {
+            {
+                use std::collections::{HashMap, hash_map::{self}, HashSet as MySet};
+                let map: HashMap<u32, u32> = HashMap::new();
+                let _: hash_map::Iter<u32, u32> = map.iter();
+                MySet::<u32>::new()
+            }
+        }
+    }
+
+    #[test]
+    fn test_use_crate_path() {
+        test_quote! {
+            {
+                use crate::submodule::MyStruct as TheStruct;
+                TheStruct::new()
+            }
+        }
+    }
+
+    #[test]
+    fn test_use_super_path() {
+        test_quote! {
+            {
+                use super::super::MyStruct;
+                MyStruct::new()
+            }
         }
     }
 }

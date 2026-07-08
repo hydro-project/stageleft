@@ -705,6 +705,14 @@ impl<'a, T: 'a, Ctx, Props, F: FnOnce(&Ctx, &mut QuotedOutput, &mut Option<Props
 {
 }
 
+/// Prefix for path metavariable identifiers (`__sl_p0`, `__sl_p1`, ...) emitted by the
+/// `q!` macro in place of relative path prefixes (`crate::`, `self::`, `super::...`)
+/// inside a quoted block. The index `N` in `__sl_pN` is an index into
+/// [`QuotedOutput::relative_paths`](internal::QuotedOutput::relative_paths), which
+/// stores the original prefix so it can be resolved to a concrete path at splice time
+/// (the stageleft macro crate has a matching `PATH_METAVAR_PREFIX` constant).
+const PATH_METAVAR_PREFIX: &str = "__sl_p";
+
 /// Resolves a relative path string (e.g. "crate :: Foo :: bar", "self :: func", "super :: X")
 /// to the concrete rewritten path for the splice site.
 fn resolve_relative_path(
@@ -790,7 +798,7 @@ fn splice_quoted_output(output: &QuotedOutput) -> proc_macro2::TokenStream {
         .iter()
         .enumerate()
         .map(|(idx, p)| {
-            let name = syn::Ident::new(&format!("__sl_p{idx}"), Span::call_site());
+            let name = syn::Ident::new(&format!("{PATH_METAVAR_PREFIX}{idx}"), Span::call_site());
             quote!(#name = #p)
         })
         .collect();
@@ -845,16 +853,24 @@ fn splice_quoted_output(output: &QuotedOutput) -> proc_macro2::TokenStream {
                     struct MetavarRewriter<'a> {
                         path_args: &'a [proc_macro2::TokenStream],
                     }
+                    impl MetavarRewriter<'_> {
+                        /// If `ident` is a path metavar (`__sl_pN`), returns the
+                        /// resolved path for index `N`.
+                        fn resolve_metavar(&self, ident: &syn::Ident) -> Option<syn::Path> {
+                            let idx = ident
+                                .to_string()
+                                .strip_prefix(PATH_METAVAR_PREFIX)?
+                                .parse::<usize>()
+                                .ok()?;
+                            let resolved = self.path_args.get(idx)?;
+                            Some(syn::parse2(resolved.clone()).unwrap())
+                        }
+                    }
                     impl VisitMut for MetavarRewriter<'_> {
                         fn visit_path_mut(&mut self, path: &mut syn::Path) {
                             if let Some(first) = path.segments.first()
-                                && let Some(idx_str) =
-                                    first.ident.to_string().strip_prefix("__sl_p")
-                                && let Ok(idx) = idx_str.parse::<usize>()
-                                && let Some(resolved) = self.path_args.get(idx)
+                                && let Some(resolved_path) = self.resolve_metavar(&first.ident)
                             {
-                                let resolved_path: syn::Path =
-                                    syn::parse2(resolved.clone()).unwrap();
                                 let remaining: Vec<_> =
                                     path.segments.iter().skip(1).cloned().collect();
                                 *path = resolved_path;
@@ -863,6 +879,22 @@ fn splice_quoted_output(output: &QuotedOutput) -> proc_macro2::TokenStream {
                                 }
                             }
                             syn::visit_mut::visit_path_mut(self, path);
+                        }
+
+                        fn visit_item_use_mut(&mut self, i: &mut syn::ItemUse) {
+                            if let syn::UseTree::Path(first) = &i.tree
+                                && let Some(resolved_path) = self.resolve_metavar(&first.ident)
+                            {
+                                let mut tree = (*first.tree).clone();
+                                for seg in resolved_path.segments.iter().rev() {
+                                    tree = syn::UseTree::Path(syn::UsePath {
+                                        ident: seg.ident.clone(),
+                                        colon2_token: Default::default(),
+                                        tree: Box::new(tree),
+                                    });
+                                }
+                                i.tree = tree;
+                            }
                         }
 
                         fn visit_macro_mut(&mut self, i: &mut syn::Macro) {
