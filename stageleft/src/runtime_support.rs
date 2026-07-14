@@ -310,3 +310,9 @@ pub fn fnmut2_borrow_type_hint<'a, I1, I2, O>(
 ) -> impl FnMut(&I1, &I2) -> O + 'a {
     f
 }
+
+pub fn fnmut2_borrow_mut_type_hint<'a, I1, I2, O>(
+    f: impl FnMut(&mut I1, I2) -> O + 'a,
+) -> impl FnMut(&mut I1, I2) -> O + 'a {
+    f
+}

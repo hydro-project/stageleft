@@ -218,6 +218,14 @@ mod tests {
     }
 
     #[test]
+    fn test_splice_snapshot_fnmut2_borrow_mut() {
+        let quoted = q!(|state: &mut i32, item: i32| *state += item);
+        let expr = quoted.splice_fnmut2_borrow_mut_ctx(&());
+        let file: syn::File = syn::parse_quote!(fn main() { #expr });
+        insta::assert_snapshot!(prettyplease::unparse(&file));
+    }
+
+    #[test]
     fn test_crate_path_in_macro() {
         // This tests the fallback path (test module) with a relative path inside a macro call
         let quoted = q!(assert!(crate::my_top_level_function()));

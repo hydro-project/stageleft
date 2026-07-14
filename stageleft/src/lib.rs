@@ -382,6 +382,26 @@ pub trait QuotedWithContextWithProps<'a, T, Ctx, Props>:
             props,
         )
     }
+
+    fn splice_fnmut2_borrow_mut_ctx_props<I1, I2, O>(self, ctx: &Ctx) -> (syn::Expr, Props)
+    where
+        Self: Sized,
+        T: FnMut(&mut I1, I2) -> O,
+    {
+        let (inner_expr, props) = self.splice_untyped_ctx_props(ctx);
+        let stageleft_root = stageleft_root();
+
+        let in1_type = quote_type::<I1>();
+        let in2_type = quote_type::<I2>();
+        let out_type = quote_type::<O>();
+
+        (
+            syn::parse_quote! {
+                #stageleft_root::runtime_support::fnmut2_borrow_mut_type_hint::<#in1_type, #in2_type, #out_type>(#inner_expr)
+            },
+            props,
+        )
+    }
 }
 
 pub trait QuotedWithContext<'a, T, Ctx>: QuotedWithContextWithProps<'a, T, Ctx, ()> {
@@ -485,6 +505,14 @@ pub trait QuotedWithContext<'a, T, Ctx>: QuotedWithContextWithProps<'a, T, Ctx, 
         T: FnMut(&I1, &I2) -> O,
     {
         QuotedWithContextWithProps::splice_fnmut2_borrow_ctx_props(self, ctx).0
+    }
+
+    fn splice_fnmut2_borrow_mut_ctx<I1, I2, O>(self, ctx: &Ctx) -> syn::Expr
+    where
+        Self: Sized,
+        T: FnMut(&mut I1, I2) -> O,
+    {
+        QuotedWithContextWithProps::splice_fnmut2_borrow_mut_ctx_props(self, ctx).0
     }
 
     fn splice_untyped(self) -> syn::Expr
@@ -661,6 +689,24 @@ pub trait QuotedWithContext<'a, T, Ctx>: QuotedWithContextWithProps<'a, T, Ctx, 
 
         syn::parse_quote! {
             #stageleft_root::runtime_support::fnmut2_borrow_type_hint::<#in1_type, #in2_type, #out_type>(#inner_expr)
+        }
+    }
+
+    fn splice_fnmut2_borrow_mut<I1, I2, O>(self) -> syn::Expr
+    where
+        Self: Sized,
+        Ctx: Default,
+        T: FnMut(&mut I1, I2) -> O,
+    {
+        let inner_expr = QuotedWithContext::splice_untyped(self);
+        let stageleft_root = stageleft_root();
+
+        let in1_type = quote_type::<I1>();
+        let in2_type = quote_type::<I2>();
+        let out_type = quote_type::<O>();
+
+        syn::parse_quote! {
+            #stageleft_root::runtime_support::fnmut2_borrow_mut_type_hint::<#in1_type, #in2_type, #out_type>(#inner_expr)
         }
     }
 }
