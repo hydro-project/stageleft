@@ -67,6 +67,75 @@ pub struct FreeVariableVisitor {
     pub rewrite_paths: bool,
 }
 
+impl FreeVariableVisitor {
+    /// If `idents` (the leading idents of a path with no leading `::`) starts with a
+    /// relative prefix (`crate`, or a run of `self` / `super`), registers the prefix
+    /// in `relative_paths` and returns the number of prefix idents together with the
+    /// `__sl_pN` metavar ident that should replace them. Returns `None` if the path
+    /// is not relative.
+    fn relative_prefix_metavar<'a>(
+        &mut self,
+        idents: impl IntoIterator<Item = &'a syn::Ident>,
+    ) -> Option<(usize, syn::Ident)> {
+        let mut idents = idents.into_iter();
+        let first = idents.next()?;
+        if *first != "crate" && *first != "self" && *first != "super" {
+            return None;
+        }
+
+        let mut prefix = vec![first.clone()];
+        if *first != "crate" {
+            prefix.extend(
+                idents
+                    .take_while(|i| **i == "self" || **i == "super")
+                    .cloned(),
+            );
+        }
+
+        let key = quote::quote!(#(#prefix)::*).to_string();
+        let next_idx = self.relative_paths.len();
+        let idx = *self.relative_paths.entry(key).or_insert(next_idx);
+        Some((prefix.len(), super::path_metavar(idx)))
+    }
+}
+
+/// Registers the names bound by a `use` tree (e.g. `y` in `use x as y;`) into
+/// the given scope so that later references to them are not treated as free
+/// variables. `parent` is the ident of the enclosing path segment, used to
+/// resolve `use foo::bar::{self}` (which binds `bar`).
+fn register_use_tree_bindings(
+    tree: &syn::UseTree,
+    parent: Option<&syn::Ident>,
+    scope: &mut ScopeStack,
+) {
+    match tree {
+        syn::UseTree::Path(path) => {
+            register_use_tree_bindings(&path.tree, Some(&path.ident), scope);
+        }
+        syn::UseTree::Name(name) => {
+            let bound = if name.ident == "self" {
+                parent
+            } else {
+                Some(&name.ident)
+            };
+            if let Some(bound) = bound {
+                scope.insert_term(bound.clone());
+                scope.insert_type(bound.clone());
+            }
+        }
+        syn::UseTree::Rename(rename) => {
+            scope.insert_term(rename.rename.clone());
+            scope.insert_type(rename.rename.clone());
+        }
+        syn::UseTree::Glob(_) => {}
+        syn::UseTree::Group(group) => {
+            for tree in &group.items {
+                register_use_tree_bindings(tree, parent, scope);
+            }
+        }
+    }
+}
+
 /// Visitor that only extracts bound identifiers from patterns,
 /// without triggering free variable detection on paths like `Some`.
 struct PatBindingVisitor<'a> {
@@ -130,6 +199,47 @@ impl syn::visit_mut::VisitMut for FreeVariableVisitor {
         syn::visit::Visit::visit_pat(&mut binding_visitor, &i.pat);
     }
 
+    fn visit_item_use_mut(&mut self, i: &mut syn::ItemUse) {
+        // Rewrite relative path prefixes (crate::, self::, super::) in the use
+        // tree, mirroring the logic in `visit_path_mut`.
+        if self.rewrite_paths && i.leading_colon.is_none() {
+            // Collect the idents of the leading `UseTree::Path` chain.
+            let mut leading = Vec::new();
+            let mut cursor = &i.tree;
+            while let syn::UseTree::Path(path) = cursor {
+                leading.push(path.ident.clone());
+                cursor = &path.tree;
+            }
+
+            if let Some((prefix_len, metavar)) = self.relative_prefix_metavar(&leading) {
+                // Peel off the prefix segments and reattach the remainder under the metavar.
+                let mut remaining = std::mem::replace(
+                    &mut i.tree,
+                    syn::UseTree::Glob(syn::UseGlob {
+                        star_token: Default::default(),
+                    }),
+                );
+                for _ in 0..prefix_len {
+                    remaining = match remaining {
+                        syn::UseTree::Path(path) => *path.tree,
+                        _ => unreachable!("prefix segments are always `UseTree::Path`"),
+                    };
+                }
+                i.tree = syn::UseTree::Path(syn::UsePath {
+                    ident: metavar,
+                    colon2_token: Default::default(),
+                    tree: Box::new(remaining),
+                });
+            }
+        }
+
+        // The idents in a `use` path refer to crates / modules / items, never
+        // to local variables, so they must not be captured as free variables
+        // (and must not be renamed to `x__free`). Instead, register the names
+        // the `use` binds so later references to them are not captured either.
+        register_use_tree_bindings(&i.tree, None, &mut self.current_scope);
+    }
+
     fn visit_ident_mut(&mut self, i: &mut proc_macro2::Ident) {
         if !self.current_scope.contains_term(i) {
             self.free_variables.insert(i.clone());
@@ -149,23 +259,9 @@ impl syn::visit_mut::VisitMut for FreeVariableVisitor {
         if self.rewrite_paths
             && i.leading_colon.is_none()
             && i.segments.len() > 1
-            && let Some(first) = i.segments.first()
-            && (first.ident == "crate" || first.ident == "self" || first.ident == "super")
+            && let Some((prefix_len, metavar)) =
+                self.relative_prefix_metavar(i.segments.iter().map(|s| &s.ident))
         {
-            let prefix_len = if first.ident == "crate" {
-                1
-            } else {
-                i.segments
-                    .iter()
-                    .take_while(|s| s.ident == "self" || s.ident == "super")
-                    .count()
-            };
-            let prefix_segments: Vec<_> = i.segments.iter().take(prefix_len).collect();
-            let key = quote::quote!(#(#prefix_segments)::*).to_string();
-            let next_idx = self.relative_paths.len();
-            let idx = *self.relative_paths.entry(key).or_insert(next_idx);
-
-            let metavar = syn::Ident::new(&format!("__sl_p{idx}"), proc_macro2::Span::call_site());
             let remaining: Vec<_> = i.segments.iter().skip(prefix_len).cloned().collect();
             i.segments.clear();
             i.segments.push(syn::PathSegment::from(metavar));

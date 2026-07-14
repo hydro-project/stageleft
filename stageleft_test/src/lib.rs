@@ -86,6 +86,24 @@ pub fn self_path_at_root<'a>(_ctx: BorrowBounds<'a>) -> impl Quoted<'a, bool> {
 }
 
 #[stageleft::entry]
+pub fn use_rename<'a>(_ctx: BorrowBounds<'a>) -> impl Quoted<'a, usize> {
+    q!({
+        use std::collections::HashSet as MySet;
+        let mut set = MySet::new();
+        set.insert(123);
+        set.len()
+    })
+}
+
+#[stageleft::entry]
+pub fn use_crate_path<'a>(_ctx: BorrowBounds<'a>) -> impl Quoted<'a, bool> {
+    q!({
+        use crate::my_top_level_function as renamed_function;
+        renamed_function()
+    })
+}
+
+#[stageleft::entry]
 fn captured_closure<'a>(_ctx: BorrowBounds<'a>) -> impl Quoted<'a, bool> {
     let closure = q!(|| true);
     q!({
@@ -142,6 +160,29 @@ mod tests {
     #[test]
     fn test_self_path_at_root() {
         assert!(self_path_at_root!());
+    }
+
+    #[test]
+    fn test_use_rename() {
+        assert_eq!(use_rename!(), 1);
+    }
+
+    #[test]
+    fn test_use_crate_path() {
+        assert!(use_crate_path!());
+    }
+
+    #[test]
+    fn test_use_crate_path_in_test_module() {
+        // This tests the fallback path (test module) with a `use` statement that
+        // has a relative path prefix
+        let quoted = q!({
+            use crate::my_top_level_function as renamed_function;
+            renamed_function()
+        });
+        let expr = quoted.splice_untyped_ctx(&());
+        let file: syn::File = syn::parse_quote!(fn main() { #expr });
+        insta::assert_snapshot!(prettyplease::unparse(&file));
     }
 
     #[test]

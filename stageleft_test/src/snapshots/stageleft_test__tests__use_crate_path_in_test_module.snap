@@ -1,0 +1,17 @@
+---
+source: stageleft_test/src/lib.rs
+assertion_line: 185
+expression: "prettyplease::unparse(&file)"
+---
+fn main() {
+    {
+        use crate::__staged::__deps::*;
+        use crate::__staged::tests::*;
+        {
+            {
+                use crate::__staged::my_top_level_function as renamed_function;
+                renamed_function()
+            }
+        }
+    }
+}
