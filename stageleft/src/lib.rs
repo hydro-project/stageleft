@@ -84,13 +84,8 @@ macro_rules! stageleft_no_entry_crate {
     () => {
         #[doc(hidden)]
         #[allow(
-            ambiguous_glob_reexports,
-            mismatched_lifetime_syntaxes,
-            unexpected_cfgs,
-            unfulfilled_lint_expectations,
-            unused,
-            clippy::suspicious_else_formatting,
-            clippy::type_complexity,
+            warnings,
+            clippy::all,
             reason = "generated code"
         )]
         pub mod __staged {
