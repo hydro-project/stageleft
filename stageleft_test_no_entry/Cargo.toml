@@ -13,7 +13,7 @@ workspace = true
 release = false
 
 [dependencies]
-stageleft = { path = "../stageleft", version = "^0.15.0" }
+stageleft = { path = "../stageleft", version = "^0.15.1" }
 
 slotmap = "1.0.0"
 
@@ -34,7 +34,7 @@ my_weak_ref_feature = ["once_cell?/std"]
 libc = "0.2"
 
 [build-dependencies]
-stageleft_tool = { path = "../stageleft_tool", version = "^0.15.0" }
+stageleft_tool = { path = "../stageleft_tool", version = "^0.15.1" }
 
 [dev-dependencies]
 insta = "1.39"
