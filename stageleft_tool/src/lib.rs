@@ -444,40 +444,143 @@ impl VisitMut for GenFinalPubVisitor {
 }
 
 /// For an optional dependency, compute the list of features that enable it.
-/// If no feature references `dep:<name>`, Cargo creates an implicit feature with the dep's name.
-/// If one or more features reference `dep:<name>`, those are the gating features.
+///
+/// A feature enables the optional dependency if its list contains `dep:<name>` or a "strong"
+/// dependency feature reference `<name>/<feat>` (but not a "weak" reference `<name>?/<feat>`,
+/// which only applies if the dependency is enabled by something else).
+///
+/// Additionally, if no feature references `dep:<name>`, Cargo creates an implicit feature with
+/// the dep's name, which is included in the returned list.
 fn optional_dep_features(dep_name: &str, features_table: Option<&toml_edit::Table>) -> Vec<String> {
-    let dep_prefix = format!("dep:{dep_name}");
-    let dep_prefix_slash = format!("{dep_prefix}/");
-    let explicit: Vec<String> = features_table
-        .into_iter()
-        .flat_map(|t| t.iter())
-        .filter(|(_, vals)| {
-            vals.as_array().is_some_and(|arr| {
-                arr.iter().any(|v| {
-                    v.as_str()
-                        .is_some_and(|s| s == dep_prefix || s.starts_with(&dep_prefix_slash))
-                })
+    let dep_ref = format!("dep:{dep_name}");
+    let strong_ref_prefix = format!("{dep_name}/");
+    // Whether any feature references `dep:<name>`, which suppresses the implicit feature.
+    let mut any_dep_ref = false;
+    let mut gating: Vec<String> = Vec::new();
+    for (feat, vals) in features_table.into_iter().flat_map(|t| t.iter()) {
+        let enables = vals.as_array().is_some_and(|arr| {
+            arr.iter().filter_map(|v| v.as_str()).fold(false, |acc, s| {
+                if s == dep_ref {
+                    any_dep_ref = true;
+                    true
+                } else {
+                    // A strong `<name>/<feat>` reference also enables the optional dep.
+                    // (A weak `<name>?/<feat>` reference does not.)
+                    acc || s.starts_with(&strong_ref_prefix)
+                }
             })
-        })
-        .map(|(feat, _)| feat.to_owned())
-        .collect();
-    if explicit.is_empty() {
-        vec![dep_name.to_owned()]
-    } else {
-        explicit
+        });
+        if enables {
+            gating.push(feat.to_owned());
+        }
+    }
+    if !any_dep_ref {
+        // No `dep:<name>` references, so Cargo creates an implicit feature named after the dep.
+        let implicit = dep_name.to_owned();
+        if !gating.contains(&implicit) {
+            gating.push(implicit);
+        }
+    }
+    gating
+}
+
+/// A single declaration of a dependency, from `[dependencies]` or a
+/// `[target.'cfg(...)'.dependencies]` table.
+struct DepDeclaration {
+    /// The `cfg(...)` predicate from the `[target.'cfg(...)']` key, or `None` for the plain
+    /// `[dependencies]` table.
+    target_cfg: Option<syn::Meta>,
+    /// The features which enable the dependency, empty if the dependency is not optional.
+    gating_features: Vec<String>,
+}
+
+impl DepDeclaration {
+    /// The `cfg` predicate under which this declaration makes the dependency available, or
+    /// `None` if it is unconditionally available.
+    fn cfg_predicate(&self) -> Option<syn::Meta> {
+        let feature_pred: Option<syn::Meta> = if self.gating_features.is_empty() {
+            None
+        } else {
+            let preds = self
+                .gating_features
+                .iter()
+                .map(|f| -> syn::Meta { parse_quote!(feature = #f) });
+            Some(parse_quote!(any(#(#preds),*)))
+        };
+        match (&self.target_cfg, feature_pred) {
+            (Some(target), Some(features)) => Some(parse_quote!(all(#target, #features))),
+            (Some(target), None) => Some(target.clone()),
+            (None, features) => features,
+        }
     }
 }
 
-/// Build a `#[cfg(...)]` attribute for the given feature list, or `None` if not optional.
-fn cfg_attr_for_features(features: &[String]) -> Option<syn::Attribute> {
-    if features.is_empty() {
-        return None;
+/// Build a `#[cfg(...)]` attribute gating a dependency declared by `declarations`, or `None` if
+/// the dependency is unconditionally available.
+fn cfg_attr_for_declarations(declarations: &[DepDeclaration]) -> Option<syn::Attribute> {
+    let mut preds = Vec::with_capacity(declarations.len());
+    for declaration in declarations {
+        // If any declaration is unconditional, the dependency is always available.
+        let pred = declaration.cfg_predicate()?;
+        preds.push(pred);
     }
-    let preds = features
-        .iter()
-        .map(|f| -> syn::Meta { parse_quote!(feature = #f) });
-    Some(parse_quote!(#[cfg(any(#(#preds),*))]))
+    if let [pred] = &*preds {
+        Some(parse_quote!(#[cfg(#pred)]))
+    } else {
+        Some(parse_quote!(#[cfg(any(#(#preds),*))]))
+    }
+}
+
+/// Parse a `[target.'<key>']` key such as `cfg(target_os = "linux")` into a `cfg` predicate.
+/// Returns `None` for keys which are not `cfg(...)` expressions (i.e. plain target triples).
+fn parse_target_cfg_key(target_key: &str) -> Option<syn::Meta> {
+    let inner = target_key.trim().strip_prefix("cfg(")?.strip_suffix(')')?;
+    syn::parse_str::<syn::Meta>(inner).ok()
+}
+
+/// A dependency of the staged crate, possibly declared in multiple tables
+/// (e.g. `[dependencies]` and/or one or more `[target.'cfg(...)'.dependencies]` tables).
+struct Dep {
+    /// Dependency name with `-` replaced by `_`.
+    name: String,
+    /// `package = "..."` renamed crate name (with `-` replaced by `_`), if any.
+    original_crate_name: Option<String>,
+    declarations: Vec<DepDeclaration>,
+}
+
+/// Collect dependencies from a `[dependencies]`-shaped table into `deps`, merging entries for
+/// dependencies which are declared in multiple tables.
+fn collect_deps_from_table(
+    deps_table: &dyn toml_edit::TableLike,
+    target_cfg: Option<&syn::Meta>,
+    features_table: Option<&toml_edit::Table>,
+    deps: &mut Vec<Dep>,
+) {
+    for (name, v) in deps_table.iter() {
+        let is_optional = v.get("optional").and_then(|o| o.as_bool()).unwrap_or(false);
+        let gating_features = if is_optional {
+            optional_dep_features(name, features_table)
+        } else {
+            vec![]
+        };
+        let declaration = DepDeclaration {
+            target_cfg: target_cfg.cloned(),
+            gating_features,
+        };
+
+        let name_underscored = name.replace('-', "_");
+        if let Some(existing) = deps.iter_mut().find(|d| d.name == name_underscored) {
+            existing.declarations.push(declaration);
+        } else {
+            deps.push(Dep {
+                name: name_underscored,
+                original_crate_name: v
+                    .get("package")
+                    .map(|v| v.as_str().unwrap().replace("-", "_")),
+                declarations: vec![declaration],
+            });
+        }
+    }
 }
 
 fn gen_deps_module(stageleft_name: syn::Ident, manifest_path: &Path) -> syn::ItemMod {
@@ -487,31 +590,41 @@ fn gen_deps_module(stageleft_name: syn::Ident, manifest_path: &Path) -> syn::Ite
         .parse::<DocumentMut>()
         .unwrap();
     let features_table = toml_parsed.get("features").and_then(|v| v.as_table());
-    let all_crate_names = toml_parsed["dependencies"]
-        .as_table()
-        .unwrap()
-        .iter()
-        .map(|(name, v)| {
-            let is_optional = v.get("optional").and_then(|o| o.as_bool()).unwrap_or(false);
-            let gating_features = if is_optional {
-                optional_dep_features(name, features_table)
-            } else {
-                vec![]
-            };
-            (
-                name.replace('-', "_"),
-                v.get("package")
-                    .map(|v| v.as_str().unwrap().replace("-", "_")),
-                gating_features,
-            )
-        })
-        .collect::<Vec<_>>();
 
-    let deps_reexported = all_crate_names
+    let mut all_deps = Vec::new();
+    if let Some(deps_table) = toml_parsed
+        .get("dependencies")
+        .and_then(|v| v.as_table_like())
+    {
+        collect_deps_from_table(deps_table, None, features_table, &mut all_deps);
+    }
+    // Also collect target-specific dependencies from `[target.'cfg(...)'.dependencies]` tables.
+    for (target_key, target_val) in toml_parsed
+        .get("target")
+        .and_then(|v| v.as_table_like())
+        .into_iter()
+        .flat_map(|t| t.iter())
+    {
+        let Some(deps_table) = target_val
+            .get("dependencies")
+            .and_then(|v| v.as_table_like())
+        else {
+            continue;
+        };
+        if let Some(target_cfg) = parse_target_cfg_key(target_key) {
+            collect_deps_from_table(deps_table, Some(&target_cfg), features_table, &mut all_deps);
+        } else {
+            println!(
+                "cargo::warning=stageleft: skipping `[target.'{target_key}'.dependencies]`: only `cfg(...)` target keys are supported in `__deps`"
+            );
+        }
+    }
+
+    let deps_reexported = all_deps
         .iter()
-        .map(|(name, _, gating_features)| {
-            let name_ident = syn::Ident::new(name, Span::call_site());
-            let cfg = cfg_attr_for_features(gating_features);
+        .map(|dep| {
+            let name_ident = syn::Ident::new(&dep.name, Span::call_site());
+            let cfg = cfg_attr_for_declarations(&dep.declarations);
             parse_quote! {
                 #cfg
                 pub use #name_ident;
@@ -519,11 +632,12 @@ fn gen_deps_module(stageleft_name: syn::Ident, manifest_path: &Path) -> syn::Ite
         })
         .collect::<Vec<syn::Item>>();
 
-    let deps_reexported_runtime = all_crate_names
+    let deps_reexported_runtime = all_deps
         .iter()
-        .map(|(name, original_crate_name, gating_features)| {
-            let original_crate_name_or_alias = original_crate_name.as_deref().unwrap_or(name);
-            let cfg = cfg_attr_for_features(gating_features);
+        .map(|dep| {
+            let name = &dep.name;
+            let original_crate_name_or_alias = dep.original_crate_name.as_deref().unwrap_or(name);
+            let cfg = cfg_attr_for_declarations(&dep.declarations);
             parse_quote! {
                 #cfg
                 {
@@ -966,6 +1080,210 @@ mod tests {
         assert!(
             generated_code.contains(r#"any (feature = "default")"#),
             "Should gate on default feature: {}",
+            generated_code
+        );
+    }
+
+    #[test]
+    fn test_gen_deps_module_optional_strong_dep_feature_ref() {
+        // A strong `dep/feat` reference enables the optional dependency, so a feature
+        // containing one must be included as a gating feature.
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "[dependencies]").unwrap();
+        writeln!(
+            temp_file,
+            r#"optional_dep = {{ version = "1.0", optional = true }}"#
+        )
+        .unwrap();
+        writeln!(temp_file, "\n[features]").unwrap();
+        writeln!(temp_file, r#"feat_a = ["dep:optional_dep"]"#).unwrap();
+        writeln!(temp_file, r#"feat_b = ["optional_dep/some_feat"]"#).unwrap();
+        temp_file.flush().unwrap();
+
+        let stageleft_name = syn::Ident::new("stageleft", Span::call_site());
+        let deps_module = gen_deps_module(stageleft_name, temp_file.path());
+        let generated_code = quote::quote!(#deps_module).to_string();
+
+        assert!(
+            generated_code.contains(r#"any (feature = "feat_a" , feature = "feat_b")"#),
+            "Both the dep: feature and the strong dep/feat feature should gate: {}",
+            generated_code
+        );
+        assert!(
+            !generated_code.contains(r#"feature = "optional_dep""#),
+            "Implicit feature should be suppressed when dep: is used: {}",
+            generated_code
+        );
+    }
+
+    #[test]
+    fn test_gen_deps_module_optional_weak_dep_feature_ref() {
+        // A weak `dep?/feat` reference does not enable the optional dependency, so a feature
+        // containing one must not be included as a gating feature.
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "[dependencies]").unwrap();
+        writeln!(
+            temp_file,
+            r#"optional_dep = {{ version = "1.0", optional = true }}"#
+        )
+        .unwrap();
+        writeln!(temp_file, "\n[features]").unwrap();
+        writeln!(temp_file, r#"feat_a = ["dep:optional_dep"]"#).unwrap();
+        writeln!(temp_file, r#"feat_w = ["optional_dep?/some_feat"]"#).unwrap();
+        temp_file.flush().unwrap();
+
+        let stageleft_name = syn::Ident::new("stageleft", Span::call_site());
+        let deps_module = gen_deps_module(stageleft_name, temp_file.path());
+        let generated_code = quote::quote!(#deps_module).to_string();
+
+        assert!(
+            generated_code.contains(r#"any (feature = "feat_a")"#),
+            "Should gate on the dep: feature: {}",
+            generated_code
+        );
+        assert!(
+            !generated_code.contains(r#"feature = "feat_w""#),
+            "Weak dep?/feat reference should not gate: {}",
+            generated_code
+        );
+    }
+
+    #[test]
+    fn test_gen_deps_module_target_specific_dep() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "[dependencies]").unwrap();
+        writeln!(temp_file, r#"regular_dep = "1.0""#).unwrap();
+        writeln!(
+            temp_file,
+            "\n[target.'cfg(target_os = \"linux\")'.dependencies]"
+        )
+        .unwrap();
+        writeln!(temp_file, r#"linux_dep = "1.0""#).unwrap();
+        temp_file.flush().unwrap();
+
+        let stageleft_name = syn::Ident::new("stageleft", Span::call_site());
+        let deps_module = gen_deps_module(stageleft_name, temp_file.path());
+        let generated_code = quote::quote!(#deps_module).to_string();
+
+        assert!(
+            generated_code.contains("pub use linux_dep"),
+            "Target-specific dep should be re-exported: {}",
+            generated_code
+        );
+        assert!(
+            generated_code.contains(r#"# [cfg (target_os = "linux")] pub use linux_dep"#),
+            "Target-specific dep should be gated by the target cfg: {}",
+            generated_code
+        );
+    }
+
+    #[test]
+    fn test_gen_deps_module_target_specific_optional_dep() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(
+            temp_file,
+            "[target.'cfg(target_os = \"linux\")'.dependencies]"
+        )
+        .unwrap();
+        writeln!(
+            temp_file,
+            r#"procfs = {{ version = "0.17", optional = true }}"#
+        )
+        .unwrap();
+        writeln!(temp_file, "\n[features]").unwrap();
+        writeln!(temp_file, r#"runtime_measure = ["dep:procfs"]"#).unwrap();
+        temp_file.flush().unwrap();
+
+        let stageleft_name = syn::Ident::new("stageleft", Span::call_site());
+        let deps_module = gen_deps_module(stageleft_name, temp_file.path());
+        let generated_code = quote::quote!(#deps_module).to_string();
+
+        assert!(
+            generated_code.contains(
+                r#"# [cfg (all (target_os = "linux" , any (feature = "runtime_measure")))] pub use procfs"#
+            ),
+            "Optional target-specific dep should be gated by both the target cfg and feature: {}",
+            generated_code
+        );
+    }
+
+    #[test]
+    fn test_gen_deps_module_dep_in_main_and_target_table() {
+        // A dep declared unconditionally in [dependencies] and also in a target table
+        // should be re-exported unconditionally.
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "[dependencies]").unwrap();
+        writeln!(temp_file, r#"tokio = "1.0""#).unwrap();
+        writeln!(temp_file, "\n[target.'cfg(unix)'.dependencies]").unwrap();
+        writeln!(
+            temp_file,
+            r#"tokio = {{ version = "1.0", features = ["fs"] }}"#
+        )
+        .unwrap();
+        temp_file.flush().unwrap();
+
+        let stageleft_name = syn::Ident::new("stageleft", Span::call_site());
+        let deps_module = gen_deps_module(stageleft_name, temp_file.path());
+        let generated_code = quote::quote!(#deps_module).to_string();
+
+        assert!(
+            generated_code.contains("pub use tokio"),
+            "Dep should be re-exported: {}",
+            generated_code
+        );
+        assert!(
+            !generated_code.contains("cfg"),
+            "Dep available unconditionally should not be cfg-gated: {}",
+            generated_code
+        );
+        assert_eq!(
+            generated_code.matches("pub use tokio").count(),
+            1,
+            "Dep should only be re-exported once: {}",
+            generated_code
+        );
+    }
+
+    #[test]
+    fn test_gen_deps_module_dep_in_multiple_target_tables() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "[target.'cfg(unix)'.dependencies]").unwrap();
+        writeln!(temp_file, r#"platform_dep = "1.0""#).unwrap();
+        writeln!(temp_file, "\n[target.'cfg(windows)'.dependencies]").unwrap();
+        writeln!(temp_file, r#"platform_dep = "1.0""#).unwrap();
+        temp_file.flush().unwrap();
+
+        let stageleft_name = syn::Ident::new("stageleft", Span::call_site());
+        let deps_module = gen_deps_module(stageleft_name, temp_file.path());
+        let generated_code = quote::quote!(#deps_module).to_string();
+
+        assert!(
+            generated_code.contains(r#"# [cfg (any (unix , windows))] pub use platform_dep"#),
+            "Dep in multiple target tables should be gated by any() of the target cfgs: {}",
+            generated_code
+        );
+        assert_eq!(
+            generated_code.matches("pub use platform_dep").count(),
+            1,
+            "Dep should only be re-exported once: {}",
+            generated_code
+        );
+    }
+
+    #[test]
+    fn test_gen_deps_module_no_dependencies_table() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "[package]").unwrap();
+        writeln!(temp_file, r#"name = "empty_crate""#).unwrap();
+        temp_file.flush().unwrap();
+
+        let stageleft_name = syn::Ident::new("stageleft", Span::call_site());
+        let deps_module = gen_deps_module(stageleft_name, temp_file.path());
+        let generated_code = quote::quote!(#deps_module).to_string();
+
+        assert!(
+            !generated_code.contains("pub use"),
+            "No deps should be re-exported: {}",
             generated_code
         );
     }

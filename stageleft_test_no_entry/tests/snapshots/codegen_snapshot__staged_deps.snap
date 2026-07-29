@@ -5,10 +5,12 @@ expression: "include_str!(concat!(env!(\"OUT_DIR\"), stageleft::PATH_SEPARATOR!(
 pub mod __deps {
     pub use stageleft;
     pub use slotmap;
-    #[cfg(any(feature = "once_cell"))]
+    #[cfg(any(feature = "my_strong_ref_feature", feature = "once_cell"))]
     pub use once_cell;
     #[cfg(any(feature = "my_cfg_feature"))]
     pub use cfg_if;
+    #[cfg(unix)]
+    pub use libc;
     stageleft::internal::ctor::declarative::ctor! {
         #[ctor(unsafe)] fn __init() { {
         stageleft::internal::add_deps_reexport(vec!["stageleft"],
@@ -21,7 +23,8 @@ pub mod __deps {
         .replace("-", "_"), ::std::borrow::ToOwned::to_owned("__staged"),
         ::std::borrow::ToOwned::to_owned("__deps"),
         ::std::borrow::ToOwned::to_owned("slotmap"),]); } #[cfg(any(feature =
-        "once_cell"))] { stageleft::internal::add_deps_reexport(vec!["once_cell"],
+        "my_strong_ref_feature", feature = "once_cell"))] {
+        stageleft::internal::add_deps_reexport(vec!["once_cell"],
         vec![option_env!("STAGELEFT_FINAL_CRATE_NAME") .unwrap_or(env!("CARGO_PKG_NAME"))
         .replace("-", "_"), ::std::borrow::ToOwned::to_owned("__staged"),
         ::std::borrow::ToOwned::to_owned("__deps"),
@@ -30,7 +33,12 @@ pub mod __deps {
         vec![option_env!("STAGELEFT_FINAL_CRATE_NAME") .unwrap_or(env!("CARGO_PKG_NAME"))
         .replace("-", "_"), ::std::borrow::ToOwned::to_owned("__staged"),
         ::std::borrow::ToOwned::to_owned("__deps"),
-        ::std::borrow::ToOwned::to_owned("cfg_if"),]); }
+        ::std::borrow::ToOwned::to_owned("cfg_if"),]); } #[cfg(unix)] {
+        stageleft::internal::add_deps_reexport(vec!["libc"],
+        vec![option_env!("STAGELEFT_FINAL_CRATE_NAME") .unwrap_or(env!("CARGO_PKG_NAME"))
+        .replace("-", "_"), ::std::borrow::ToOwned::to_owned("__staged"),
+        ::std::borrow::ToOwned::to_owned("__deps"),
+        ::std::borrow::ToOwned::to_owned("libc"),]); }
         stageleft::internal::add_crate_with_staged(env!("CARGO_PKG_NAME") .replace("-",
         "_")); }
     }
