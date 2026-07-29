@@ -278,12 +278,16 @@ pub fn entry(
         _ => panic!("Must return impl Quoted<T>"),
     };
 
-    let input_contents = input
-        .to_token_stream()
-        .to_string()
-        .chars()
-        .filter(|c| c.is_alphanumeric())
-        .collect::<String>();
+    let input_contents = {
+        let mut input_for_hash = input.clone();
+        input_for_hash.attrs = vec![];
+        input_for_hash
+            .to_token_stream()
+            .to_string()
+            .chars()
+            .filter(|c| c.is_alphanumeric())
+            .collect::<String>()
+    };
 
     let input_hash = format!("macro_{:X}", Sha256::digest(input_contents));
     let input_hash_ident = syn::Ident::new(&input_hash, Span::call_site());
