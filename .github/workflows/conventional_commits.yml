@@ -1,11 +1,12 @@
 name: Conventional Commits
 
 on:
-  pull_request_target:
+  pull_request:
     types:
       - opened
       - edited
       - synchronize
+      - ready_for_review
 
 permissions:
   pull-requests: read
@@ -14,7 +15,19 @@ jobs:
   main:
     name: Conventional Commits
     runs-on: ubuntu-latest
+    if: ${{ !github.event.pull_request.draft }}
     steps:
-      - uses: amannn/action-semantic-pull-request@v5
+      - uses: amannn/action-semantic-pull-request@e32d7e603df1aa1ba07e981f2a23455dee596825 # v5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            docs
+            refactor
+            perf
+            test
+            chore
+            ci
+            revert
