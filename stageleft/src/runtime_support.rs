@@ -92,6 +92,28 @@ macro_rules! impl_parse_from_literal_numeric {
     };
 }
 
+macro_rules! impl_parse_from_literal_float {
+    ($($ty:ty),*) => {
+        $(
+            impl ParseFromLiteral for $ty {
+                fn parse_from_literal(literal: &syn::Expr) -> Self {
+                    match literal {
+                        syn::Expr::Lit(syn::ExprLit {
+                            lit: syn::Lit::Float(lit_float),
+                            ..
+                        }) => lit_float.base10_parse().unwrap(),
+                        syn::Expr::Lit(syn::ExprLit {
+                            lit: syn::Lit::Int(lit_int),
+                            ..
+                        }) => lit_int.base10_parse().unwrap(),
+                        _ => panic!("Expected literal"),
+                    }
+                }
+            }
+        )*
+    };
+}
+
 impl ParseFromLiteral for bool {
     fn parse_from_literal(literal: &syn::Expr) -> Self {
         match literal {
@@ -104,8 +126,21 @@ impl ParseFromLiteral for bool {
     }
 }
 
+impl ParseFromLiteral for char {
+    fn parse_from_literal(literal: &syn::Expr) -> Self {
+        match literal {
+            syn::Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Char(lit_char),
+                ..
+            }) => lit_char.value(),
+            _ => panic!("Expected literal"),
+        }
+    }
+}
+
 impl_parse_from_literal_numeric!(i8, i16, i32, i64, i128, isize);
 impl_parse_from_literal_numeric!(u8, u16, u32, u64, u128, usize);
+impl_parse_from_literal_float!(f32, f64);
 
 /// A variant of `FreeVariableWithContext` that also has a properties type parameter.
 /// When `Props = ()`, this is equivalent to `FreeVariableWithContext`.
@@ -155,7 +190,9 @@ pub trait FreeVariable<O>: FreeVariableWithContext<(), O = O> {
 
 impl<O, T: FreeVariableWithContext<(), O = O>> FreeVariable<O> for T {}
 
-macro_rules! impl_free_variable_from_literal_numeric {
+/// Implements free-variable capture for types whose values can be emitted
+/// directly as literal tokens (via their [`quote::ToTokens`] implementation).
+macro_rules! impl_free_variable_from_literal {
     ($($ty:ty),*) => {
         $(
             impl<Ctx> FreeVariableWithContextWithProps<Ctx, ()> for $ty {
@@ -174,8 +211,95 @@ macro_rules! impl_free_variable_from_literal_numeric {
     };
 }
 
-impl_free_variable_from_literal_numeric!(i8, i16, i32, i64, i128, isize);
-impl_free_variable_from_literal_numeric!(u8, u16, u32, u64, u128, usize);
+impl_free_variable_from_literal!(i8, i16, i32, i64, i128, isize);
+impl_free_variable_from_literal!(u8, u16, u32, u64, u128, usize);
+impl_free_variable_from_literal!(bool, char);
+
+/// Implements free-variable capture for floats. Finite values are emitted as
+/// suffixed literals, while non-finite values (infinities and NaNs, which have
+/// no literal syntax) are emitted via `from_bits`, exactly preserving the bit
+/// pattern (including any NaN payload).
+macro_rules! impl_free_variable_float {
+    ($($ty:ty),*) => {
+        $(
+            impl<Ctx> FreeVariableWithContextWithProps<Ctx, ()> for $ty {
+                type O = $ty;
+
+                fn to_tokens(self, _ctx: &Ctx) -> (QuoteTokens, ()) {
+                    let expr = if self.is_finite() {
+                        quote!(#self)
+                    } else {
+                        let bits = self.to_bits();
+                        quote!(::core::primitive::$ty::from_bits(#bits))
+                    };
+                    (QuoteTokens {
+                        prelude: None,
+                        expr: Some(expr)
+                    }, ())
+                }
+            }
+
+            impl<'a, Ctx> crate::QuotedWithContextWithProps<'a, $ty, Ctx, ()> for $ty {}
+        )*
+    };
+}
+
+impl_free_variable_float!(f32, f64);
+
+impl<Ctx> FreeVariableWithContextWithProps<Ctx, ()> for std::time::Duration {
+    type O = std::time::Duration;
+
+    fn to_tokens(self, _ctx: &Ctx) -> (QuoteTokens, ()) {
+        let secs = self.as_secs();
+        let nanos = self.subsec_nanos();
+        (
+            QuoteTokens {
+                prelude: None,
+                expr: Some(quote!(::core::time::Duration::new(#secs, #nanos))),
+            },
+            (),
+        )
+    }
+}
+
+impl<'a, Ctx> crate::QuotedWithContextWithProps<'a, std::time::Duration, Ctx, ()>
+    for std::time::Duration
+{
+}
+
+impl<Ctx> FreeVariableWithContextWithProps<Ctx, ()> for std::time::SystemTime {
+    type O = std::time::SystemTime;
+
+    fn to_tokens(self, _ctx: &Ctx) -> (QuoteTokens, ()) {
+        // A `SystemTime` is anchored to the unix epoch, so it can be quoted as an
+        // exact offset (possibly negative) from `UNIX_EPOCH`.
+        let expr = match self.duration_since(std::time::UNIX_EPOCH) {
+            Ok(after_epoch) => {
+                let secs = after_epoch.as_secs();
+                let nanos = after_epoch.subsec_nanos();
+                quote!((::std::time::UNIX_EPOCH + ::core::time::Duration::new(#secs, #nanos)))
+            }
+            Err(err) => {
+                let before_epoch = err.duration();
+                let secs = before_epoch.as_secs();
+                let nanos = before_epoch.subsec_nanos();
+                quote!((::std::time::UNIX_EPOCH - ::core::time::Duration::new(#secs, #nanos)))
+            }
+        };
+        (
+            QuoteTokens {
+                prelude: None,
+                expr: Some(expr),
+            },
+            (),
+        )
+    }
+}
+
+impl<'a, Ctx> crate::QuotedWithContextWithProps<'a, std::time::SystemTime, Ctx, ()>
+    for std::time::SystemTime
+{
+}
 
 impl<Ctx> FreeVariableWithContextWithProps<Ctx, ()> for &str {
     type O = &'static str;

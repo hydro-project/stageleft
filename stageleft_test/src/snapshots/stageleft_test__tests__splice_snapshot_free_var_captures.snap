@@ -1,0 +1,30 @@
+---
+source: stageleft_test/src/lib.rs
+expression: "prettyplease::unparse(&file)"
+---
+fn main() {
+    {
+        use crate::__staged::__deps::*;
+        use crate::__staged::tests::*;
+        {
+            let after_epoch__free = (::std::time::UNIX_EPOCH
+                + ::core::time::Duration::new(1700000000u64, 42u32));
+            let b__free = false;
+            let before_epoch__free = (::std::time::UNIX_EPOCH
+                - ::core::time::Duration::new(5u64, 500u32));
+            let c__free = 'q';
+            let dur__free = ::core::time::Duration::new(1u64, 500000000u32);
+            let f__free = 1.5f64;
+            let nan__free = ::core::primitive::f32::from_bits(2143289344u32);
+            (
+                b__free,
+                c__free,
+                f__free,
+                nan__free,
+                dur__free,
+                before_epoch__free,
+                after_epoch__free,
+            )
+        }
+    }
+}
