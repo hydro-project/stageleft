@@ -297,6 +297,12 @@ mod tests {
     }
 
     #[test]
+    fn test_literal_args_negative_and_parenthesized() {
+        assert_eq!(literal_args!(false, 'x', -2.5), (false, 'x', -5.0f64));
+        assert_eq!(literal_args!(true, 'x', (1.25)), (true, 'x', 2.5f64));
+    }
+
+    #[test]
     fn test_submodule_private_struct() {
         let result = submodule::private_struct!();
         assert_eq!(result, 1);
@@ -344,7 +350,11 @@ mod tests {
         let b = false;
         let c = 'q';
         let f = 1.5f64;
-        let nan = f32::NAN;
+        // Use an explicit bit pattern (the canonical quiet NaN, which is what
+        // `f32::NAN` is in practice) rather than `f32::NAN` itself, since the
+        // exact bit pattern of `f32::NAN` is not guaranteed to be stable
+        // across platforms/toolchains and would make this snapshot brittle.
+        let nan = f32::from_bits(0x7FC00000);
         let dur = std::time::Duration::from_millis(1500);
         let before_epoch = std::time::UNIX_EPOCH - std::time::Duration::new(5, 500);
         let after_epoch = std::time::UNIX_EPOCH + std::time::Duration::new(1_700_000_000, 42);

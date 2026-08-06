@@ -74,40 +74,52 @@ pub trait ParseFromLiteral {
     fn parse_from_literal(literal: &syn::Expr) -> Self;
 }
 
+/// Unwraps an expression that is expected to be a literal, looking through
+/// parentheses, invisible groups, and unary negation. Returns the literal
+/// along with whether an (odd number of) negation(s) was applied to it.
+fn unwrap_literal(expr: &syn::Expr) -> (bool, &syn::Lit) {
+    match expr {
+        syn::Expr::Lit(syn::ExprLit { lit, .. }) => (false, lit),
+        syn::Expr::Paren(syn::ExprParen { expr, .. })
+        | syn::Expr::Group(syn::ExprGroup { expr, .. }) => unwrap_literal(expr),
+        syn::Expr::Unary(syn::ExprUnary {
+            op: syn::UnOp::Neg(_),
+            expr,
+            ..
+        }) => {
+            let (negated, lit) = unwrap_literal(expr);
+            (!negated, lit)
+        }
+        _ => panic!(
+            "Expected a literal, got `{}`",
+            quote!(#expr).to_string().replace(char::is_whitespace, "")
+        ),
+    }
+}
+
 macro_rules! impl_parse_from_literal_numeric {
     ($($ty:ty),*) => {
         $(
             impl ParseFromLiteral for $ty {
                 fn parse_from_literal(literal: &syn::Expr) -> Self {
-                    match literal {
-                        syn::Expr::Lit(syn::ExprLit {
-                            lit: syn::Lit::Int(lit_int),
-                            ..
-                        }) => lit_int.base10_parse().unwrap(),
-                        _ => panic!("Expected literal"),
-                    }
-                }
-            }
-        )*
-    };
-}
-
-macro_rules! impl_parse_from_literal_float {
-    ($($ty:ty),*) => {
-        $(
-            impl ParseFromLiteral for $ty {
-                fn parse_from_literal(literal: &syn::Expr) -> Self {
-                    match literal {
-                        syn::Expr::Lit(syn::ExprLit {
-                            lit: syn::Lit::Float(lit_float),
-                            ..
-                        }) => lit_float.base10_parse().unwrap(),
-                        syn::Expr::Lit(syn::ExprLit {
-                            lit: syn::Lit::Int(lit_int),
-                            ..
-                        }) => lit_int.base10_parse().unwrap(),
-                        _ => panic!("Expected literal"),
-                    }
+                    let (negated, lit) = unwrap_literal(literal);
+                    let digits = match lit {
+                        syn::Lit::Int(lit_int) => lit_int.base10_digits(),
+                        syn::Lit::Float(lit_float) => lit_float.base10_digits(),
+                        _ => panic!(
+                            "Expected `{}` literal, got `{}`",
+                            stringify!($ty),
+                            quote!(#lit)
+                        ),
+                    };
+                    let repr = if negated {
+                        format!("-{}", digits)
+                    } else {
+                        digits.to_string()
+                    };
+                    repr.parse().unwrap_or_else(|_| {
+                        panic!("Literal `{}` cannot be parsed as `{}`", repr, stringify!($ty))
+                    })
                 }
             }
         )*
@@ -116,31 +128,25 @@ macro_rules! impl_parse_from_literal_float {
 
 impl ParseFromLiteral for bool {
     fn parse_from_literal(literal: &syn::Expr) -> Self {
-        match literal {
-            syn::Expr::Lit(syn::ExprLit {
-                lit: syn::Lit::Bool(lit_bool),
-                ..
-            }) => lit_bool.value(),
-            _ => panic!("Expected literal"),
+        match unwrap_literal(literal) {
+            (false, syn::Lit::Bool(lit_bool)) => lit_bool.value(),
+            (_, lit) => panic!("Expected `bool` literal, got `{}`", quote!(#lit)),
         }
     }
 }
 
 impl ParseFromLiteral for char {
     fn parse_from_literal(literal: &syn::Expr) -> Self {
-        match literal {
-            syn::Expr::Lit(syn::ExprLit {
-                lit: syn::Lit::Char(lit_char),
-                ..
-            }) => lit_char.value(),
-            _ => panic!("Expected literal"),
+        match unwrap_literal(literal) {
+            (false, syn::Lit::Char(lit_char)) => lit_char.value(),
+            (_, lit) => panic!("Expected `char` literal, got `{}`", quote!(#lit)),
         }
     }
 }
 
 impl_parse_from_literal_numeric!(i8, i16, i32, i64, i128, isize);
 impl_parse_from_literal_numeric!(u8, u16, u32, u64, u128, usize);
-impl_parse_from_literal_float!(f32, f64);
+impl_parse_from_literal_numeric!(f32, f64);
 
 /// A variant of `FreeVariableWithContext` that also has a properties type parameter.
 /// When `Props = ()`, this is equivalent to `FreeVariableWithContext`.
@@ -219,6 +225,12 @@ impl_free_variable_from_literal!(bool, char);
 /// suffixed literals, while non-finite values (infinities and NaNs, which have
 /// no literal syntax) are emitted via `from_bits`, exactly preserving the bit
 /// pattern (including any NaN payload).
+///
+/// Emitting finite values as decimal literals is lossless: `quote` formats
+/// floats using Rust's built-in float formatting, which is guaranteed to
+/// produce the shortest decimal string that parses back ("round-trips") to
+/// exactly the same value, and `rustc` parses float literals with correct
+/// rounding. This is verified by `tests::float_capture_roundtrip` below.
 macro_rules! impl_free_variable_float {
     ($($ty:ty),*) => {
         $(
@@ -439,4 +451,144 @@ pub fn fnmut2_borrow_mut_type_hint<'a, I1, I2, O>(
     f: impl FnMut(&mut I1, I2) -> O + 'a,
 ) -> impl FnMut(&mut I1, I2) -> O + 'a {
     f
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Splices `value` as a free variable and parses the emitted literal back,
+    /// the same way `rustc` parses float literals (both `str::parse` and
+    /// `rustc`'s literal parsing are correctly rounded, so they agree on every
+    /// input). Returns the reconstructed value for bit-exact comparison.
+    macro_rules! roundtrip_finite {
+        ($ty:ty, $value:expr) => {{
+            let (tokens, ()) = FreeVariableWithContextWithProps::<(), ()>::to_tokens($value, &());
+            let expr: syn::Expr = syn::parse2(tokens.expr.unwrap()).unwrap();
+            <$ty as ParseFromLiteral>::parse_from_literal(&expr)
+        }};
+    }
+
+    #[test]
+    fn float_capture_roundtrip() {
+        let f64_values = [
+            0.0f64,
+            -0.0,
+            0.1,
+            0.2,
+            0.1 + 0.2, // 0.30000000000000004, classic shortest-repr stress test
+            1.0 / 3.0,
+            std::f64::consts::PI,
+            std::f64::consts::E,
+            f64::MAX,
+            f64::MIN,
+            f64::MIN_POSITIVE,
+            f64::EPSILON,
+            f64::from_bits(1), // smallest positive subnormal (5e-324)
+            -1.5e-308,         // subnormal-adjacent
+            123456789.12345679,
+            2f64.powi(60) + 1.0,
+        ];
+        for value in f64_values {
+            assert_eq!(
+                roundtrip_finite!(f64, value).to_bits(),
+                value.to_bits(),
+                "f64 {value:?} did not round-trip"
+            );
+        }
+
+        let f32_values = [
+            0.0f32,
+            -0.0,
+            0.1,
+            1.0 / 3.0,
+            std::f32::consts::PI,
+            f32::MAX,
+            f32::MIN_POSITIVE,
+            f32::EPSILON,
+            f32::from_bits(1), // smallest positive subnormal
+        ];
+        for value in f32_values {
+            assert_eq!(
+                roundtrip_finite!(f32, value).to_bits(),
+                value.to_bits(),
+                "f32 {value:?} did not round-trip"
+            );
+        }
+
+        // Sweep pseudo-random bit patterns to catch anything the hand-picked
+        // values above miss.
+        let mut state = 0x9E3779B97F4A7C15u64;
+        for _ in 0..10_000 {
+            // xorshift64
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+
+            let value = f64::from_bits(state);
+            if value.is_finite() {
+                assert_eq!(
+                    roundtrip_finite!(f64, value).to_bits(),
+                    value.to_bits(),
+                    "f64 {value:?} did not round-trip"
+                );
+            }
+
+            let value = f32::from_bits(state as u32);
+            if value.is_finite() {
+                assert_eq!(
+                    roundtrip_finite!(f32, value).to_bits(),
+                    value.to_bits(),
+                    "f32 {value:?} did not round-trip"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn float_capture_nonfinite_emits_from_bits() {
+        for value in [f64::NAN, -f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let (tokens, ()) = FreeVariableWithContextWithProps::<(), ()>::to_tokens(value, &());
+            let expected = format!("::core::primitive::f64::from_bits({}u64)", value.to_bits());
+            assert_eq!(
+                tokens
+                    .expr
+                    .unwrap()
+                    .to_string()
+                    .replace(char::is_whitespace, ""),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn parse_from_literal_negative_and_parenthesized() {
+        let parse = |s: &str| syn::parse_str::<syn::Expr>(s).unwrap();
+
+        assert_eq!(f64::parse_from_literal(&parse("-1.5")), -1.5);
+        assert_eq!(f64::parse_from_literal(&parse("(1.5)")), 1.5);
+        assert_eq!(f64::parse_from_literal(&parse("-(1.5)")), -1.5);
+        assert_eq!(f64::parse_from_literal(&parse("--1.5")), 1.5);
+        assert_eq!(f32::parse_from_literal(&parse("-2")), -2.0f32);
+        assert_eq!(i32::parse_from_literal(&parse("-42")), -42);
+        assert_eq!(
+            i64::parse_from_literal(&parse("-9223372036854775808")),
+            i64::MIN
+        );
+        assert_eq!(u32::parse_from_literal(&parse("(42)")), 42);
+        assert!(bool::parse_from_literal(&parse("(true)")));
+        assert_eq!(char::parse_from_literal(&parse("('x')")), 'x');
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot be parsed as `u32`")]
+    fn parse_from_literal_rejects_negative_unsigned() {
+        u32::parse_from_literal(&syn::parse_str::<syn::Expr>("-42").unwrap());
+    }
+
+    #[test]
+    #[should_panic(expected = "Expected a literal")]
+    fn parse_from_literal_rejects_non_literal() {
+        i32::parse_from_literal(&syn::parse_str::<syn::Expr>("1 + 2").unwrap());
+    }
 }
