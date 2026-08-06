@@ -14,7 +14,7 @@ fn main() {
                 - ::core::time::Duration::new(5u64, 500u32));
             let c__free = 'q';
             let dur__free = ::core::time::Duration::new(1u64, 500000000u32);
-            let f__free = 1.5f64;
+            let f__free = ::core::primitive::f64::from_bits(4609434218613702656u64);
             let nan__free = ::core::primitive::f32::from_bits(2143289344u32);
             (
                 b__free,

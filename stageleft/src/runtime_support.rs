@@ -221,16 +221,16 @@ impl_free_variable_from_literal!(i8, i16, i32, i64, i128, isize);
 impl_free_variable_from_literal!(u8, u16, u32, u64, u128, usize);
 impl_free_variable_from_literal!(bool, char);
 
-/// Implements free-variable capture for floats. Finite values are emitted as
-/// suffixed literals, while non-finite values (infinities and NaNs, which have
-/// no literal syntax) are emitted via `from_bits`, exactly preserving the bit
-/// pattern (including any NaN payload).
+/// Implements free-variable capture for floats. All values are emitted as a
+/// `from_bits` call with the exact bit pattern, e.g.
+/// `::core::primitive::f64::from_bits(4609434218613702656u64)` for `1.5f64`.
 ///
-/// Emitting finite values as decimal literals is lossless: `quote` formats
-/// floats using Rust's built-in float formatting, which is guaranteed to
-/// produce the shortest decimal string that parses back ("round-trips") to
-/// exactly the same value, and `rustc` parses float literals with correct
-/// rounding. This is verified by `tests::float_capture_roundtrip` below.
+/// This is exact by construction for every value: it preserves the bit
+/// pattern of infinities, NaNs (including payloads), and signed zeros, and
+/// avoids relying on the round-trip fidelity of float formatting, which is an
+/// implementation detail of the standard library rather than a documented
+/// guarantee of `quote`/`proc-macro2`/`Display`. (`from_bits` is a stable
+/// `const fn`, so the emitted expression is usable in const contexts too.)
 macro_rules! impl_free_variable_float {
     ($($ty:ty),*) => {
         $(
@@ -238,15 +238,10 @@ macro_rules! impl_free_variable_float {
                 type O = $ty;
 
                 fn to_tokens(self, _ctx: &Ctx) -> (QuoteTokens, ()) {
-                    let expr = if self.is_finite() {
-                        quote!(#self)
-                    } else {
-                        let bits = self.to_bits();
-                        quote!(::core::primitive::$ty::from_bits(#bits))
-                    };
+                    let bits = self.to_bits();
                     (QuoteTokens {
                         prelude: None,
-                        expr: Some(expr)
+                        expr: Some(quote!(::core::primitive::$ty::from_bits(#bits)))
                     }, ())
                 }
             }
@@ -457,15 +452,36 @@ pub fn fnmut2_borrow_mut_type_hint<'a, I1, I2, O>(
 mod tests {
     use super::*;
 
-    /// Splices `value` as a free variable and parses the emitted literal back,
-    /// the same way `rustc` parses float literals (both `str::parse` and
-    /// `rustc`'s literal parsing are correctly rounded, so they agree on every
-    /// input). Returns the reconstructed value for bit-exact comparison.
-    macro_rules! roundtrip_finite {
-        ($ty:ty, $value:expr) => {{
-            let (tokens, ()) = FreeVariableWithContextWithProps::<(), ()>::to_tokens($value, &());
-            let expr: syn::Expr = syn::parse2(tokens.expr.unwrap()).unwrap();
-            <$ty as ParseFromLiteral>::parse_from_literal(&expr)
+    /// Splices `value` as a float free variable, asserts the emitted tokens
+    /// are exactly `::core::primitive::fNN::from_bits(<bits>uNN)`, and
+    /// reconstructs the value from those tokens for bit-exact comparison.
+    macro_rules! roundtrip_float {
+        ($ty:ty, $bits_ty:ty, $value:expr) => {{
+            let value: $ty = $value;
+            let (tokens, ()) = FreeVariableWithContextWithProps::<(), ()>::to_tokens(value, &());
+            let tokens = tokens.expr.unwrap().to_string();
+            let expected = format!(
+                "::core::primitive::{}::from_bits({}{})",
+                stringify!($ty),
+                value.to_bits(),
+                stringify!($bits_ty),
+            );
+            assert_eq!(
+                tokens.replace(char::is_whitespace, ""),
+                expected,
+                "unexpected tokens emitted for {} {value:?}",
+                stringify!($ty)
+            );
+            let bits: $bits_ty = tokens
+                .split('(')
+                .nth(1)
+                .unwrap()
+                .trim_end_matches(')')
+                .trim()
+                .trim_end_matches(stringify!($bits_ty))
+                .parse()
+                .unwrap();
+            <$ty>::from_bits(bits)
         }};
     }
 
@@ -476,7 +492,7 @@ mod tests {
             -0.0,
             0.1,
             0.2,
-            0.1 + 0.2, // 0.30000000000000004, classic shortest-repr stress test
+            0.1 + 0.2, // 0.30000000000000004
             1.0 / 3.0,
             std::f64::consts::PI,
             std::f64::consts::E,
@@ -488,10 +504,14 @@ mod tests {
             -1.5e-308,         // subnormal-adjacent
             123456789.12345679,
             2f64.powi(60) + 1.0,
+            f64::NAN,
+            -f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
         ];
         for value in f64_values {
             assert_eq!(
-                roundtrip_finite!(f64, value).to_bits(),
+                roundtrip_float!(f64, u64, value).to_bits(),
                 value.to_bits(),
                 "f64 {value:?} did not round-trip"
             );
@@ -507,56 +527,14 @@ mod tests {
             f32::MIN_POSITIVE,
             f32::EPSILON,
             f32::from_bits(1), // smallest positive subnormal
+            f32::NAN,
+            f32::INFINITY,
         ];
         for value in f32_values {
             assert_eq!(
-                roundtrip_finite!(f32, value).to_bits(),
+                roundtrip_float!(f32, u32, value).to_bits(),
                 value.to_bits(),
                 "f32 {value:?} did not round-trip"
-            );
-        }
-
-        // Sweep pseudo-random bit patterns to catch anything the hand-picked
-        // values above miss.
-        let mut state = 0x9E3779B97F4A7C15u64;
-        for _ in 0..10_000 {
-            // xorshift64
-            state ^= state << 13;
-            state ^= state >> 7;
-            state ^= state << 17;
-
-            let value = f64::from_bits(state);
-            if value.is_finite() {
-                assert_eq!(
-                    roundtrip_finite!(f64, value).to_bits(),
-                    value.to_bits(),
-                    "f64 {value:?} did not round-trip"
-                );
-            }
-
-            let value = f32::from_bits(state as u32);
-            if value.is_finite() {
-                assert_eq!(
-                    roundtrip_finite!(f32, value).to_bits(),
-                    value.to_bits(),
-                    "f32 {value:?} did not round-trip"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn float_capture_nonfinite_emits_from_bits() {
-        for value in [f64::NAN, -f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-            let (tokens, ()) = FreeVariableWithContextWithProps::<(), ()>::to_tokens(value, &());
-            let expected = format!("::core::primitive::f64::from_bits({}u64)", value.to_bits());
-            assert_eq!(
-                tokens
-                    .expr
-                    .unwrap()
-                    .to_string()
-                    .replace(char::is_whitespace, ""),
-                expected
             );
         }
     }
