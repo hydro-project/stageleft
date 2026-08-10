@@ -163,7 +163,8 @@ fn captured_time<'a>(
     ),
 > {
     let dur = std::time::Duration::new(123, 456);
-    let after_epoch = std::time::UNIX_EPOCH + std::time::Duration::new(1_700_000_000, 42);
+    // Note windows only supports 100 nanosecond precision (2nd arg): https://doc.rust-lang.org/std/time/struct.SystemTime.html#platform-specific-behavior
+    let after_epoch = std::time::UNIX_EPOCH + std::time::Duration::new(1_700_000_000, 200);
     let before_epoch = std::time::UNIX_EPOCH - std::time::Duration::new(5, 500);
     q!((dur, after_epoch, before_epoch))
 }
@@ -281,9 +282,10 @@ mod tests {
     fn test_captured_time() {
         let (dur, after_epoch, before_epoch) = captured_time!();
         assert_eq!(dur, std::time::Duration::new(123, 456));
+        // Note windows only supports 100 nanosecond precision (2nd arg): https://doc.rust-lang.org/std/time/struct.SystemTime.html#platform-specific-behavior
         assert_eq!(
             after_epoch,
-            std::time::UNIX_EPOCH + std::time::Duration::new(1_700_000_000, 42)
+            std::time::UNIX_EPOCH + std::time::Duration::new(1_700_000_000, 200)
         );
         assert_eq!(
             before_epoch,
@@ -357,7 +359,8 @@ mod tests {
         let nan = f32::from_bits(0x7FC00000);
         let dur = std::time::Duration::from_millis(1500);
         let before_epoch = std::time::UNIX_EPOCH - std::time::Duration::new(5, 500);
-        let after_epoch = std::time::UNIX_EPOCH + std::time::Duration::new(1_700_000_000, 42);
+        // Note windows only supports 100 nanosecond precision (2nd arg): https://doc.rust-lang.org/std/time/struct.SystemTime.html#platform-specific-behavior
+        let after_epoch = std::time::UNIX_EPOCH + std::time::Duration::new(1_700_000_000, 200);
         let quoted = q!((b, c, f, nan, dur, before_epoch, after_epoch));
         let expr = quoted.splice_untyped_ctx(&());
         let file: syn::File = syn::parse_quote!(fn main() { #expr });

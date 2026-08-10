@@ -8,7 +8,7 @@ fn main() {
         use crate::__staged::tests::*;
         {
             let after_epoch__free = (::std::time::UNIX_EPOCH
-                + ::core::time::Duration::new(1700000000u64, 42u32));
+                + ::core::time::Duration::new(1700000000u64, 200u32));
             let b__free = false;
             let before_epoch__free = (::std::time::UNIX_EPOCH
                 - ::core::time::Duration::new(5u64, 500u32));
