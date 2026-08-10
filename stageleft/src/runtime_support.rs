@@ -126,27 +126,27 @@ macro_rules! impl_parse_from_literal_numeric {
     };
 }
 
+impl_parse_from_literal_numeric!(i8, i16, i32, i64, i128, isize);
+impl_parse_from_literal_numeric!(u8, u16, u32, u64, u128, usize);
+impl_parse_from_literal_numeric!(f32, f64);
+
 impl ParseFromLiteral for bool {
     fn parse_from_literal(literal: &syn::Expr) -> Self {
-        match unwrap_literal(literal) {
-            (false, syn::Lit::Bool(lit_bool)) => lit_bool.value(),
-            (_, lit) => panic!("Expected `bool` literal, got `{}`", quote!(#lit)),
-        }
+        let (false, syn::Lit::Bool(lit_bool)) = unwrap_literal(literal) else {
+            panic!("Expected `bool` literal, got `{}`", quote!(#literal))
+        };
+        lit_bool.value()
     }
 }
 
 impl ParseFromLiteral for char {
     fn parse_from_literal(literal: &syn::Expr) -> Self {
-        match unwrap_literal(literal) {
-            (false, syn::Lit::Char(lit_char)) => lit_char.value(),
-            (_, lit) => panic!("Expected `char` literal, got `{}`", quote!(#lit)),
-        }
+        let (false, syn::Lit::Char(lit_char)) = unwrap_literal(literal) else {
+            panic!("Expected `char` literal, got `{}`", quote!(#literal))
+        };
+        lit_char.value()
     }
 }
-
-impl_parse_from_literal_numeric!(i8, i16, i32, i64, i128, isize);
-impl_parse_from_literal_numeric!(u8, u16, u32, u64, u128, usize);
-impl_parse_from_literal_numeric!(f32, f64);
 
 /// A variant of `FreeVariableWithContext` that also has a properties type parameter.
 /// When `Props = ()`, this is equivalent to `FreeVariableWithContext`.
@@ -280,19 +280,13 @@ impl<Ctx> FreeVariableWithContextWithProps<Ctx, ()> for std::time::SystemTime {
     fn to_tokens(self, _ctx: &Ctx) -> (QuoteTokens, ()) {
         // A `SystemTime` is anchored to the unix epoch, so it can be quoted as an
         // exact offset (possibly negative) from `UNIX_EPOCH`.
-        let expr = match self.duration_since(std::time::UNIX_EPOCH) {
-            Ok(after_epoch) => {
-                let secs = after_epoch.as_secs();
-                let nanos = after_epoch.subsec_nanos();
-                quote!((::std::time::UNIX_EPOCH + ::core::time::Duration::new(#secs, #nanos)))
-            }
-            Err(err) => {
-                let before_epoch = err.duration();
-                let secs = before_epoch.as_secs();
-                let nanos = before_epoch.subsec_nanos();
-                quote!((::std::time::UNIX_EPOCH - ::core::time::Duration::new(#secs, #nanos)))
-            }
+        let (op, duration) = match self.duration_since(std::time::UNIX_EPOCH) {
+            Ok(after_epoch) => (quote!(+), after_epoch),
+            Err(err) => (quote!(-), err.duration()),
         };
+        let secs = duration.as_secs();
+        let nanos = duration.subsec_nanos();
+        let expr = quote!((::std::time::UNIX_EPOCH #op ::core::time::Duration::new(#secs, #nanos)));
         (
             QuoteTokens {
                 prelude: None,
