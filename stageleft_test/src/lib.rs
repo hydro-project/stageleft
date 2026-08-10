@@ -125,6 +125,61 @@ fn ref_str<'a>(s: &str) -> impl Quoted<'a, &'static str> {
     q!(s)
 }
 
+#[stageleft::entry]
+fn captured_primitives<'a>(_ctx: BorrowBounds<'a>) -> impl Quoted<'a, (bool, char, f32, f64)> {
+    let b = true;
+    let c = '\u{1F600}';
+    let f_32 = 2.5f32;
+    let f_64 = -1.5f64;
+    q!((b, c, f_32, f_64))
+}
+
+#[stageleft::entry]
+fn captured_bool_in_closure<'a>(
+    _ctx: BorrowBounds<'a>,
+    x: RuntimeData<i32>,
+) -> impl Quoted<'a, i32> {
+    let debug_mode = true;
+    q!((move |x: i32| if debug_mode { x } else { 0 })(x))
+}
+
+#[stageleft::entry]
+fn captured_nonfinite_floats<'a>(_ctx: BorrowBounds<'a>) -> impl Quoted<'a, (f32, f64, f64)> {
+    let nan = f32::NAN;
+    let inf = f64::INFINITY;
+    let neg_inf = f64::NEG_INFINITY;
+    q!((nan, inf, neg_inf))
+}
+
+#[stageleft::entry]
+fn captured_time<'a>(
+    _ctx: BorrowBounds<'a>,
+) -> impl Quoted<
+    'a,
+    (
+        std::time::Duration,
+        std::time::SystemTime,
+        std::time::SystemTime,
+    ),
+> {
+    let dur = std::time::Duration::new(123, 456);
+    // Note windows only supports 100 nanosecond precision (2nd arg): https://doc.rust-lang.org/std/time/struct.SystemTime.html#platform-specific-behavior
+    let after_epoch = std::time::UNIX_EPOCH + std::time::Duration::new(1_700_000_000, 200);
+    let before_epoch = std::time::UNIX_EPOCH - std::time::Duration::new(5, 500);
+    q!((dur, after_epoch, before_epoch))
+}
+
+#[stageleft::entry]
+fn literal_args<'a>(
+    _ctx: BorrowBounds<'a>,
+    flag: bool,
+    ch: char,
+    factor: f64,
+) -> impl Quoted<'a, (bool, char, f64)> {
+    let doubled = factor * 2.0;
+    q!((flag, ch, doubled))
+}
+
 pub(crate) mod backtrace_test;
 
 #[cfg(stageleft_runtime)]
@@ -206,6 +261,50 @@ mod tests {
     }
 
     #[test]
+    fn test_captured_primitives() {
+        assert_eq!(captured_primitives!(), (true, '\u{1F600}', 2.5f32, -1.5f64));
+    }
+
+    #[test]
+    fn test_captured_bool_in_closure() {
+        assert_eq!(captured_bool_in_closure!(7), 7);
+    }
+
+    #[test]
+    fn test_captured_nonfinite_floats() {
+        let (nan, inf, neg_inf) = captured_nonfinite_floats!();
+        assert!(nan.is_nan());
+        assert_eq!(inf, f64::INFINITY);
+        assert_eq!(neg_inf, f64::NEG_INFINITY);
+    }
+
+    #[test]
+    fn test_captured_time() {
+        let (dur, after_epoch, before_epoch) = captured_time!();
+        assert_eq!(dur, std::time::Duration::new(123, 456));
+        // Note windows only supports 100 nanosecond precision (2nd arg): https://doc.rust-lang.org/std/time/struct.SystemTime.html#platform-specific-behavior
+        assert_eq!(
+            after_epoch,
+            std::time::UNIX_EPOCH + std::time::Duration::new(1_700_000_000, 200)
+        );
+        assert_eq!(
+            before_epoch,
+            std::time::UNIX_EPOCH - std::time::Duration::new(5, 500)
+        );
+    }
+
+    #[test]
+    fn test_literal_args() {
+        assert_eq!(literal_args!(true, 'x', 2.5), (true, 'x', 5.0f64));
+    }
+
+    #[test]
+    fn test_literal_args_negative_and_parenthesized() {
+        assert_eq!(literal_args!(false, 'x', -2.5), (false, 'x', -5.0f64));
+        assert_eq!(literal_args!(true, 'x', (1.25)), (true, 'x', 2.5f64));
+    }
+
+    #[test]
     fn test_submodule_private_struct() {
         let result = submodule::private_struct!();
         assert_eq!(result, 1);
@@ -243,6 +342,26 @@ mod tests {
     fn test_splice_snapshot_free_var() {
         let x = 42i32;
         let quoted = q!(x + 1);
+        let expr = quoted.splice_untyped_ctx(&());
+        let file: syn::File = syn::parse_quote!(fn main() { #expr });
+        insta::assert_snapshot!(prettyplease::unparse(&file));
+    }
+
+    #[test]
+    fn test_splice_snapshot_free_var_captures() {
+        let b = false;
+        let c = 'q';
+        let f = 1.5f64;
+        // Use an explicit bit pattern (the canonical quiet NaN, which is what
+        // `f32::NAN` is in practice) rather than `f32::NAN` itself, since the
+        // exact bit pattern of `f32::NAN` is not guaranteed to be stable
+        // across platforms/toolchains and would make this snapshot brittle.
+        let nan = f32::from_bits(0x7FC00000);
+        let dur = std::time::Duration::from_millis(1500);
+        let before_epoch = std::time::UNIX_EPOCH - std::time::Duration::new(5, 500);
+        // Note windows only supports 100 nanosecond precision (2nd arg): https://doc.rust-lang.org/std/time/struct.SystemTime.html#platform-specific-behavior
+        let after_epoch = std::time::UNIX_EPOCH + std::time::Duration::new(1_700_000_000, 200);
+        let quoted = q!((b, c, f, nan, dur, before_epoch, after_epoch));
         let expr = quoted.splice_untyped_ctx(&());
         let file: syn::File = syn::parse_quote!(fn main() { #expr });
         insta::assert_snapshot!(prettyplease::unparse(&file));
