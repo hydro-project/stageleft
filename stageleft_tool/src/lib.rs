@@ -223,6 +223,24 @@ fn item_visibility_ident(item: &syn::Item) -> Option<(&syn::Visibility, &syn::Id
 }
 
 impl VisitMut for GenFinalPubVisitor {
+    fn visit_attribute_mut(&mut self, i: &mut syn::Attribute) {
+        if let Some(feature) = &self.test_mode_feature
+            && i.path().is_ident("cfg_attr")
+            && let Ok(mut args) = i.parse_args_with(
+                syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
+            )
+            && matches!(
+                args.first(),
+                Some(syn::Meta::Path(condition)) if condition.is_ident("test")
+            )
+        {
+            *args.first_mut().unwrap() = parse_quote!(feature = #feature);
+            *i = parse_quote!(#[cfg_attr(#args)]);
+        }
+
+        syn::visit_mut::visit_attribute_mut(self, i);
+    }
+
     fn visit_item_enum_mut(&mut self, i: &mut syn::ItemEnum) {
         i.vis = parse_quote!(pub);
         syn::visit_mut::visit_item_enum_mut(self, i);
@@ -898,6 +916,56 @@ mod tests {
     use super::*;
     use std::io::Write;
     use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_gen_staged_trybuild_lifts_cfg_attr_test() {
+        let mut source_file = NamedTempFile::new().unwrap();
+        writeln!(
+            source_file,
+            r#"
+            #[cfg(test)]
+            mod tests {{
+                #[cfg_attr(test, derive(Clone))]
+                struct TestOnlyClone;
+
+                fn clone_in_staged_code(value: &TestOnlyClone) {{
+                    let _ = value.clone();
+                }}
+            }}
+            "#
+        )
+        .unwrap();
+        source_file.flush().unwrap();
+
+        let mut manifest_file = NamedTempFile::new().unwrap();
+        writeln!(
+            manifest_file,
+            r#"
+            [package]
+            name = "staged_crate"
+            version = "0.0.0"
+            "#
+        )
+        .unwrap();
+        manifest_file.flush().unwrap();
+
+        let generated = gen_staged_trybuild(
+            source_file.path(),
+            manifest_file.path(),
+            "staged_crate",
+            Some("test_mode".to_owned()),
+        );
+        let generated_code = quote::quote!(#generated).to_string();
+
+        assert!(
+            generated_code.contains(r#"# [cfg (feature = "test_mode")] pub mod tests"#),
+            "`cfg(test)` should use the staged test-mode feature: {generated_code}"
+        );
+        assert!(
+            generated_code.contains(r#"# [cfg_attr (feature = "test_mode" , derive (Clone))]"#),
+            "`cfg_attr(test, ...)` should use the staged test-mode feature: {generated_code}"
+        );
+    }
 
     #[test]
     fn test_gen_deps_module_uses_crate_name_or_alias() {
