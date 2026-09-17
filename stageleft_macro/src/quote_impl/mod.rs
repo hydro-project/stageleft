@@ -134,7 +134,7 @@ pub fn q_impl(root: TokenStream, toks: TokenStream) -> TokenStream {
         visitor.visit_expr_mut(&mut expr);
         expr.into_token_stream()
     } else {
-        expr_toks
+        expr_toks.clone()
     };
 
     let relative_paths = visitor.relative_paths;
@@ -295,13 +295,39 @@ pub fn q_impl(root: TokenStream, toks: TokenStream) -> TokenStream {
     });
 
     // Generate property builder chain: Default::default().a(b).c(d)
+    //
+    // When a property value is a macro invocation (e.g. `commutative = verus_proof!(...)`),
+    // the quoted expression is appended to the macro's arguments as a trailing
+    // `__target = { ... }` argument, followed by the free variables (captures) of the
+    // expression as `__captures = [a, b, ...]`, so that proof macros can generate proofs
+    // *about* the quoted function (e.g. a Verus proof of commutativity) and validate
+    // user-declared capture lists for completeness. The original (un-rewritten) tokens
+    // are passed, since the property value is expanded at the `q!` call site where those
+    // tokens are valid.
     let props_builder = if properties.is_empty() {
         quote!(#root::properties::Property::make_root(__props))
     } else {
+        let free_variables = &visitor.free_variables;
         let builder_calls = properties.iter().map(|prop| {
             let name = &prop.name;
             let value = &prop.value;
-            quote!(.#name(#value))
+            if let syn::Expr::Macro(expr_macro) = value {
+                let mut mac = expr_macro.mac.clone();
+                let args = &mac.tokens;
+                let needs_comma = !args.is_empty()
+                    && !matches!(
+                        args.clone().into_iter().last(),
+                        Some(proc_macro2::TokenTree::Punct(p)) if p.as_char() == ','
+                    );
+                let sep = if needs_comma { quote!(,) } else { quote!() };
+                let target = &expr_toks;
+                let captures = free_variables.iter();
+                mac.tokens =
+                    quote!(#args #sep __target = { #target }, __captures = [#(#captures),*]);
+                quote!(.#name(#mac))
+            } else {
+                quote!(.#name(#value))
+            }
         });
         quote!(#root::properties::Property::make_root(__props)#(#builder_calls)*)
     };
@@ -417,6 +443,34 @@ mod tests {
         test_quote! {
             1 + 2
         }
+    }
+
+    #[test]
+    fn test_property_macro_value() {
+        // When a property annotation's value is a macro invocation, the quoted
+        // expression and its captures are appended to the macro's arguments so that
+        // proof macros can generate proofs about the quoted function.
+        let quoted_tokens = q_impl(
+            quote!(stageleft),
+            quote!(
+                |acc, x| { *acc += x + add_amount },
+                commutative = my_proof!(#[doc = r" why this is commutative"])
+            ),
+        );
+        let wrapped: syn::File = parse_quote! {
+            fn main() {
+                #quoted_tokens
+            }
+        };
+
+        insta::with_settings!({
+            snapshot_suffix => "macro_tokens",
+            prepend_module_to_snapshot => false,
+        }, {
+            insta::assert_snapshot!(
+                prettyplease::unparse(&wrapped)
+            );
+        });
     }
 
     #[test]
