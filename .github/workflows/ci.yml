@@ -107,3 +107,7 @@ jobs:
 
       - name: Run doctests
         run: cargo test --no-fail-fast --doc
+
+      - name: Test remapped source paths
+        if: runner.os == 'Linux'
+        run: cargo --config 'build.rustflags=["--remap-path-prefix=stageleft_test/=cache-workspace/stageleft_test/"]' test --locked -p stageleft_test test_quote_macro_name_is_stable_under_path_remapping -- --ignored

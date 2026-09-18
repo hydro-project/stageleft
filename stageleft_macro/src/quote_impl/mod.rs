@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 use proc_macro2::{Span, TokenStream};
 use quote::{ToTokens, quote};
@@ -22,6 +23,47 @@ pub(crate) const PATH_METAVAR_PREFIX: &str = "__sl_p";
 /// Creates the `__sl_pN` metavar ident for the given `relative_paths` index.
 pub(crate) fn path_metavar(idx: usize) -> syn::Ident {
     syn::Ident::new(&format!("{PATH_METAVAR_PREFIX}{idx}"), Span::call_site())
+}
+
+fn normalize_file(span: &Span, manifest_dir: &Path) -> String {
+    // `Span::file()` is a display path. When rustc remaps a source path, that
+    // remapping is reflected in the path returned by `Span::file()`, but the resulting path is not
+    // guaranteed to resolve to the physical source file. Prefer the unremapped
+    // on-disk path from `Span::local_file()` when it is available.
+    let display_file = span.file();
+    normalize_file_paths(&display_file, span.local_file(), manifest_dir)
+}
+
+fn normalize_file_paths(
+    display_file: &str,
+    local_file: Option<PathBuf>,
+    manifest_dir: &Path,
+) -> String {
+    let canonical_manifest_dir = manifest_dir
+        .canonicalize()
+        .unwrap_or_else(|_| manifest_dir.to_path_buf());
+    let relative_file = local_file
+        .and_then(|file| file.canonicalize().ok())
+        .and_then(|file| {
+            file.strip_prefix(&canonical_manifest_dir)
+                .ok()
+                .map(Path::to_path_buf)
+        })
+        .unwrap_or_else(|| {
+            let display_file = PathBuf::from(display_file);
+            let canonical_file = display_file.canonicalize().unwrap_or(display_file);
+            canonical_file
+                .strip_prefix(&canonical_manifest_dir)
+                .unwrap_or(&canonical_file)
+                .to_path_buf()
+        })
+        .display()
+        .to_string();
+
+    relative_file
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '_' })
+        .collect()
 }
 
 /// A property annotation like `commutative = Kani` or `idempotent = ManualProof(/** something */)`
@@ -148,33 +190,19 @@ pub fn q_impl(root: TokenStream, toks: TokenStream) -> TokenStream {
     ) = if is_rust_analyzer {
         (quote!(), None, vec![], String::new())
     } else {
-        // Generate a hash for the hidden macro name using source file + span location + content
+        // Generate a unique hidden macro name using source file + span location.
         let span = toks
             .into_iter()
             .next()
             .map(|t| t.span())
             .unwrap_or_else(Span::call_site);
         let start = span.start();
-        // Make the file path relative to the final crate's manifest dir for portability.
-        let file_path = std::path::PathBuf::from(span.file());
-        let canonical_file = file_path.canonicalize().unwrap_or(file_path);
-        let manifest_dir = std::path::PathBuf::from(
+        let manifest_dir = PathBuf::from(
             std::env::var("STAGELEFT_FINAL_CRATE_MANIFEST_DIR")
                 .or_else(|_| std::env::var("CARGO_MANIFEST_DIR"))
                 .expect("STAGELEFT_FINAL_CRATE_MANIFEST_DIR or CARGO_MANIFEST_DIR must be set"),
         );
-        let canonical_manifest_dir = manifest_dir.canonicalize().unwrap_or(manifest_dir);
-        let relative_file = canonical_file
-            .strip_prefix(&canonical_manifest_dir)
-            .unwrap_or(&canonical_file)
-            .display()
-            .to_string();
-        // Build a deterministic macro name from the relative file path + location.
-        // Normalize to valid Rust identifier characters.
-        let normalized_file: String = relative_file
-            .chars()
-            .map(|c| if c.is_alphanumeric() { c } else { '_' })
-            .collect();
+        let normalized_file = normalize_file(&span, &manifest_dir);
         let macro_name = format!(
             "__stageleft_quote_{normalized_file}_{}_{}",
             start.line, start.column
@@ -413,10 +441,12 @@ pub fn q_impl(root: TokenStream, toks: TokenStream) -> TokenStream {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use quote::quote;
     use syn::parse_quote;
 
-    use super::q_impl;
+    use super::{normalize_file_paths, q_impl};
 
     macro_rules! test_quote {
         ($program:expr) => {
@@ -436,6 +466,29 @@ mod tests {
                 );
             });
         };
+    }
+
+    #[test]
+    fn test_normalize_file_paths_ignores_remapped_display_path() {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let local_file = manifest_dir.join("src/quote_impl/mod.rs");
+
+        let normalized = normalize_file_paths(
+            "remapped-stageleft/stageleft_macro/src/quote_impl/mod.rs",
+            Some(local_file),
+            &manifest_dir,
+        );
+
+        assert_eq!(normalized, "src_quote_impl_mod_rs");
+    }
+
+    #[test]
+    fn test_normalize_file_paths_falls_back_to_display_path() {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+
+        let normalized = normalize_file_paths("src/quote_impl/mod.rs", None, &manifest_dir);
+
+        assert_eq!(normalized, "src_quote_impl_mod_rs");
     }
 
     #[test]
