@@ -331,6 +331,32 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires rustc --remap-path-prefix; exercised by CI"]
+    fn test_quote_macro_name_is_stable_under_path_remapping() {
+        assert_eq!(
+            file!(),
+            "cache-workspace/stageleft_test/src/lib.rs",
+            "the test must be compiled with the expected source-path remapping"
+        );
+
+        let expr = QuotedWithContext::splice_untyped_ctx(
+            crate_paths(stageleft::QuotedContext::create()),
+            &(),
+        );
+        let file: syn::File = syn::parse_quote!(fn main() { #expr });
+        let rendered = prettyplease::unparse(&file);
+
+        assert!(
+            rendered.contains("__stageleft_quote_src_lib_rs_"),
+            "macro name should use the physical crate-relative path:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("cache_workspace_stageleft_test"),
+            "macro name must not use the remapped display path:\n{rendered}"
+        );
+    }
+
+    #[test]
     fn test_splice_snapshot_simple() {
         let quoted = q!(1 + 2);
         let expr = quoted.splice_untyped_ctx(&());
