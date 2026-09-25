@@ -502,13 +502,13 @@ fn optional_dep_features(dep_name: &str, features_table: Option<&toml_edit::Tabl
     gating
 }
 
-/// A single declaration of a dependency, from `[dependencies]` or a
-/// `[target.'cfg(...)'.dependencies]` table.
+/// A single declaration of a dependency, from `[dependencies]`, `[dev-dependencies]`, or a
+/// `[target.'cfg(...)'.dependencies]`/`[target.'cfg(...)'.dev-dependencies]` table.
 struct DepDeclaration {
     /// The `cfg(...)` predicate from the `[target.'cfg(...)']` key, or `None` for the plain
-    /// `[dependencies]` table.
+    /// `[dependencies]`/`[dev-dependencies]` table.
     target_cfg: Option<syn::Meta>,
-    /// The features which enable the dependency, empty if the dependency is not optional.
+    /// The features which enable the dependency, empty if the dependency is unconditional.
     gating_features: Vec<String>,
 }
 
@@ -566,20 +566,49 @@ struct Dep {
     declarations: Vec<DepDeclaration>,
 }
 
+/// The kind of `[dependencies]`-shaped table being collected, which determines how its
+/// declarations are gated.
+#[derive(Clone, Copy)]
+enum DepTableKind<'a> {
+    /// `[dependencies]`: optional dependencies are gated on the features which enable them.
+    Normal {
+        features_table: Option<&'a toml_edit::Table>,
+    },
+    /// `[dev-dependencies]`: in trybuild mode, the generated crate makes dev-dependencies
+    /// available only when the test-mode feature is enabled, so they are gated on it. (Cargo
+    /// does not allow `optional` dev-dependencies.)
+    Dev { test_mode_feature: &'a str },
+}
+
+impl DepTableKind<'_> {
+    /// The name of the table key, e.g. `dependencies`.
+    fn table_name(self) -> &'static str {
+        match self {
+            DepTableKind::Normal { .. } => "dependencies",
+            DepTableKind::Dev { .. } => "dev-dependencies",
+        }
+    }
+}
+
 /// Collect dependencies from a `[dependencies]`-shaped table into `deps`, merging entries for
 /// dependencies which are declared in multiple tables.
 fn collect_deps_from_table(
     deps_table: &dyn toml_edit::TableLike,
     target_cfg: Option<&syn::Meta>,
-    features_table: Option<&toml_edit::Table>,
+    kind: DepTableKind<'_>,
     deps: &mut Vec<Dep>,
 ) {
     for (name, v) in deps_table.iter() {
-        let is_optional = v.get("optional").and_then(|o| o.as_bool()).unwrap_or(false);
-        let gating_features = if is_optional {
-            optional_dep_features(name, features_table)
-        } else {
-            vec![]
+        let gating_features = match kind {
+            DepTableKind::Normal { features_table } => {
+                let is_optional = v.get("optional").and_then(|o| o.as_bool()).unwrap_or(false);
+                if is_optional {
+                    optional_dep_features(name, features_table)
+                } else {
+                    vec![]
+                }
+            }
+            DepTableKind::Dev { test_mode_feature } => vec![test_mode_feature.to_owned()],
         };
         let declaration = DepDeclaration {
             target_cfg: target_cfg.cloned(),
@@ -601,7 +630,20 @@ fn collect_deps_from_table(
     }
 }
 
-fn gen_deps_module(stageleft_name: syn::Ident, manifest_path: &Path) -> syn::ItemMod {
+/// Generates `mod __deps`, which re-exports the dependencies of the staged crate so that spliced
+/// code can name them through the staged crate.
+///
+/// # Arguments
+/// * `stageleft_name` - name of the `stageleft` crate as seen from the generated code.
+/// * `manifest_path` - path to the package `Cargo.toml`.
+/// * `test_mode_feature` - If `Some("FEATURE")`, dev-dependencies are also re-exported, gated with
+///   `#[cfg(feature = "FEATURE")]`. In trybuild mode, the generated crate makes dev-dependencies
+///   available under the test-mode feature, and staged `#[cfg(test)]` code may name them.
+fn gen_deps_module(
+    stageleft_name: syn::Ident,
+    manifest_path: &Path,
+    test_mode_feature: Option<&str>,
+) -> syn::ItemMod {
     // based on proc-macro-crate
     let toml_parsed = fs::read_to_string(manifest_path)
         .unwrap()
@@ -609,32 +651,33 @@ fn gen_deps_module(stageleft_name: syn::Ident, manifest_path: &Path) -> syn::Ite
         .unwrap();
     let features_table = toml_parsed.get("features").and_then(|v| v.as_table());
 
+    let table_kinds = std::iter::once(DepTableKind::Normal { features_table })
+        .chain(test_mode_feature.map(|test_mode_feature| DepTableKind::Dev { test_mode_feature }));
+
     let mut all_deps = Vec::new();
-    if let Some(deps_table) = toml_parsed
-        .get("dependencies")
-        .and_then(|v| v.as_table_like())
-    {
-        collect_deps_from_table(deps_table, None, features_table, &mut all_deps);
-    }
-    // Also collect target-specific dependencies from `[target.'cfg(...)'.dependencies]` tables.
-    for (target_key, target_val) in toml_parsed
-        .get("target")
-        .and_then(|v| v.as_table_like())
-        .into_iter()
-        .flat_map(|t| t.iter())
-    {
-        let Some(deps_table) = target_val
-            .get("dependencies")
+    for kind in table_kinds {
+        let table_name = kind.table_name();
+        if let Some(deps_table) = toml_parsed.get(table_name).and_then(|v| v.as_table_like()) {
+            collect_deps_from_table(deps_table, None, kind, &mut all_deps);
+        }
+        // Also collect target-specific dependencies from `[target.'cfg(...)'.<table_name>]` tables.
+        for (target_key, target_val) in toml_parsed
+            .get("target")
             .and_then(|v| v.as_table_like())
-        else {
-            continue;
-        };
-        if let Some(target_cfg) = parse_target_cfg_key(target_key) {
-            collect_deps_from_table(deps_table, Some(&target_cfg), features_table, &mut all_deps);
-        } else {
-            println!(
-                "cargo::warning=stageleft: skipping `[target.'{target_key}'.dependencies]`: only `cfg(...)` target keys are supported in `__deps`"
-            );
+            .into_iter()
+            .flat_map(|t| t.iter())
+        {
+            let Some(deps_table) = target_val.get(table_name).and_then(|v| v.as_table_like())
+            else {
+                continue;
+            };
+            if let Some(target_cfg) = parse_target_cfg_key(target_key) {
+                collect_deps_from_table(deps_table, Some(&target_cfg), kind, &mut all_deps);
+            } else {
+                println!(
+                    "cargo::warning=stageleft: skipping `[target.'{target_key}'.{table_name}]`: only `cfg(...)` target keys are supported in `__deps`"
+                );
+            }
         }
     }
 
@@ -750,7 +793,8 @@ fn gen_staged_mod(
 /// * `orig_crate_path` - Rust module path to the staged crate. Usually `crate`, but may be the staged crate name if
 ///   the entry and staged crate/target are different.
 /// * `test_mode_feature` - If `Some("FEATURE")`, `#[cfg(test)]` modules will be gated with
-///   `#[cfg(feature = "FEATURE")]` instead of being fully removed.
+///   `#[cfg(feature = "FEATURE")]` instead of being fully removed, and dev-dependencies will be
+///   re-exported from `__deps` under the same gate.
 pub fn gen_staged_trybuild(
     lib_path: &Path,
     manifest_path: &Path,
@@ -759,9 +803,12 @@ pub fn gen_staged_trybuild(
 ) -> syn::File {
     let orig_crate_path = syn::parse_str(orig_crate_path)
         .expect("Failed to parse `orig_crate_path` as `crate`, crate name, or module path.");
+    let deps_mod = gen_deps_module(
+        parse_quote!(stageleft),
+        manifest_path,
+        test_mode_feature.as_deref(),
+    );
     let mut flow_lib_pub = gen_staged_mod(lib_path, orig_crate_path, test_mode_feature, true);
-
-    let deps_mod = gen_deps_module(parse_quote!(stageleft), manifest_path);
 
     flow_lib_pub.items.push(syn::Item::Mod(deps_mod));
     flow_lib_pub
@@ -825,7 +872,7 @@ pub fn gen_staged(gen_pub: bool) {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
     let manifest_path = Path::new(&manifest_dir).join("Cargo.toml");
 
-    let deps_file = gen_deps_module(stageleft_name, &manifest_path);
+    let deps_file = gen_deps_module(stageleft_name, &manifest_path, None);
 
     fs::write(
         Path::new(&out_dir).join("staged_deps.rs"),
@@ -981,7 +1028,7 @@ mod tests {
         temp_file.flush().unwrap();
 
         let stageleft_name = syn::Ident::new("stageleft", Span::call_site());
-        let deps_module = gen_deps_module(stageleft_name, temp_file.path());
+        let deps_module = gen_deps_module(stageleft_name, temp_file.path(), None);
 
         let generated_code = quote::quote!(#deps_module).to_string();
 
@@ -1017,7 +1064,7 @@ mod tests {
         temp_file.flush().unwrap();
 
         let stageleft_name = syn::Ident::new("stageleft", Span::call_site());
-        let deps_module = gen_deps_module(stageleft_name, temp_file.path());
+        let deps_module = gen_deps_module(stageleft_name, temp_file.path(), None);
         let generated_code = quote::quote!(#deps_module).to_string();
 
         // required dep should not be gated
@@ -1048,7 +1095,7 @@ mod tests {
         temp_file.flush().unwrap();
 
         let stageleft_name = syn::Ident::new("stageleft", Span::call_site());
-        let deps_module = gen_deps_module(stageleft_name, temp_file.path());
+        let deps_module = gen_deps_module(stageleft_name, temp_file.path(), None);
         let generated_code = quote::quote!(#deps_module).to_string();
 
         assert!(
@@ -1078,7 +1125,7 @@ mod tests {
         temp_file.flush().unwrap();
 
         let stageleft_name = syn::Ident::new("stageleft", Span::call_site());
-        let deps_module = gen_deps_module(stageleft_name, temp_file.path());
+        let deps_module = gen_deps_module(stageleft_name, temp_file.path(), None);
         let generated_code = quote::quote!(#deps_module).to_string();
 
         assert!(
@@ -1110,7 +1157,7 @@ mod tests {
         temp_file.flush().unwrap();
 
         let stageleft_name = syn::Ident::new("stageleft", Span::call_site());
-        let deps_module = gen_deps_module(stageleft_name, temp_file.path());
+        let deps_module = gen_deps_module(stageleft_name, temp_file.path(), None);
         let generated_code = quote::quote!(#deps_module).to_string();
 
         // Should gate on the implicit feature "foo", not "bar"
@@ -1142,7 +1189,7 @@ mod tests {
         temp_file.flush().unwrap();
 
         let stageleft_name = syn::Ident::new("stageleft", Span::call_site());
-        let deps_module = gen_deps_module(stageleft_name, temp_file.path());
+        let deps_module = gen_deps_module(stageleft_name, temp_file.path(), None);
         let generated_code = quote::quote!(#deps_module).to_string();
 
         assert!(
@@ -1169,7 +1216,7 @@ mod tests {
         temp_file.flush().unwrap();
 
         let stageleft_name = syn::Ident::new("stageleft", Span::call_site());
-        let deps_module = gen_deps_module(stageleft_name, temp_file.path());
+        let deps_module = gen_deps_module(stageleft_name, temp_file.path(), None);
         let generated_code = quote::quote!(#deps_module).to_string();
 
         assert!(
@@ -1201,7 +1248,7 @@ mod tests {
         temp_file.flush().unwrap();
 
         let stageleft_name = syn::Ident::new("stageleft", Span::call_site());
-        let deps_module = gen_deps_module(stageleft_name, temp_file.path());
+        let deps_module = gen_deps_module(stageleft_name, temp_file.path(), None);
         let generated_code = quote::quote!(#deps_module).to_string();
 
         assert!(
@@ -1230,7 +1277,7 @@ mod tests {
         temp_file.flush().unwrap();
 
         let stageleft_name = syn::Ident::new("stageleft", Span::call_site());
-        let deps_module = gen_deps_module(stageleft_name, temp_file.path());
+        let deps_module = gen_deps_module(stageleft_name, temp_file.path(), None);
         let generated_code = quote::quote!(#deps_module).to_string();
 
         assert!(
@@ -1263,7 +1310,7 @@ mod tests {
         temp_file.flush().unwrap();
 
         let stageleft_name = syn::Ident::new("stageleft", Span::call_site());
-        let deps_module = gen_deps_module(stageleft_name, temp_file.path());
+        let deps_module = gen_deps_module(stageleft_name, temp_file.path(), None);
         let generated_code = quote::quote!(#deps_module).to_string();
 
         assert!(
@@ -1291,7 +1338,7 @@ mod tests {
         temp_file.flush().unwrap();
 
         let stageleft_name = syn::Ident::new("stageleft", Span::call_site());
-        let deps_module = gen_deps_module(stageleft_name, temp_file.path());
+        let deps_module = gen_deps_module(stageleft_name, temp_file.path(), None);
         let generated_code = quote::quote!(#deps_module).to_string();
 
         assert!(
@@ -1322,7 +1369,7 @@ mod tests {
         temp_file.flush().unwrap();
 
         let stageleft_name = syn::Ident::new("stageleft", Span::call_site());
-        let deps_module = gen_deps_module(stageleft_name, temp_file.path());
+        let deps_module = gen_deps_module(stageleft_name, temp_file.path(), None);
         let generated_code = quote::quote!(#deps_module).to_string();
 
         assert!(
@@ -1346,12 +1393,166 @@ mod tests {
         temp_file.flush().unwrap();
 
         let stageleft_name = syn::Ident::new("stageleft", Span::call_site());
-        let deps_module = gen_deps_module(stageleft_name, temp_file.path());
+        let deps_module = gen_deps_module(stageleft_name, temp_file.path(), None);
         let generated_code = quote::quote!(#deps_module).to_string();
 
         assert!(
             !generated_code.contains("pub use"),
             "No deps should be re-exported: {}",
+            generated_code
+        );
+    }
+
+    #[test]
+    fn test_gen_deps_module_dev_dependency_gated_on_test_mode() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "[dependencies]").unwrap();
+        writeln!(temp_file, r#"regular_dep = "1.0""#).unwrap();
+        writeln!(temp_file, "\n[dev-dependencies]").unwrap();
+        writeln!(temp_file, r#"dev_only = "1.0""#).unwrap();
+        writeln!(
+            temp_file,
+            r#"dev_alias = {{ package = "actual-dev-crate", version = "1.0" }}"#
+        )
+        .unwrap();
+        temp_file.flush().unwrap();
+
+        let stageleft_name = syn::Ident::new("stageleft", Span::call_site());
+        let deps_module = gen_deps_module(stageleft_name, temp_file.path(), Some("test_mode"));
+        let generated_code = quote::quote!(#deps_module).to_string();
+
+        assert!(
+            generated_code.contains(r#"# [cfg (any (feature = "test_mode"))] pub use dev_only ;"#),
+            "Dev-only dep should be re-exported under the test-mode feature: {}",
+            generated_code
+        );
+        assert!(
+            generated_code.contains(
+                r#"# [cfg (any (feature = "test_mode"))] { stageleft :: internal :: add_deps_reexport (vec ! ["dev_only"]"#
+            ),
+            "Dev-only dep should be registered under the test-mode feature: {}",
+            generated_code
+        );
+        assert!(
+            generated_code.contains(r#"# [cfg (any (feature = "test_mode"))] pub use dev_alias ;"#),
+            "Renamed dev-only dep should be re-exported by its alias: {}",
+            generated_code
+        );
+        assert!(
+            generated_code.contains(
+                r#"# [cfg (any (feature = "test_mode"))] { stageleft :: internal :: add_deps_reexport (vec ! ["actual_dev_crate"]"#
+            ),
+            "Renamed dev-only dep should be registered by its package name: {}",
+            generated_code
+        );
+        assert!(
+            generated_code.contains("pub use regular_dep ;")
+                && !generated_code.contains(")] pub use regular_dep ;"),
+            "Regular dep should not be gated: {}",
+            generated_code
+        );
+    }
+
+    #[test]
+    fn test_gen_deps_module_dev_and_regular_dep_ungated() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "[dependencies]").unwrap();
+        writeln!(temp_file, r#"shared = "1.0""#).unwrap();
+        writeln!(temp_file, "\n[dev-dependencies]").unwrap();
+        writeln!(
+            temp_file,
+            r#"shared = {{ version = "1.0", features = ["extra"] }}"#
+        )
+        .unwrap();
+        temp_file.flush().unwrap();
+
+        let stageleft_name = syn::Ident::new("stageleft", Span::call_site());
+        let deps_module = gen_deps_module(stageleft_name, temp_file.path(), Some("test_mode"));
+        let generated_code = quote::quote!(#deps_module).to_string();
+
+        assert!(
+            !generated_code.contains("cfg"),
+            "Dep which is also a non-optional regular dep should not be cfg-gated: {}",
+            generated_code
+        );
+        assert_eq!(
+            generated_code.matches("pub use shared").count(),
+            1,
+            "Dep should only be re-exported once: {}",
+            generated_code
+        );
+    }
+
+    #[test]
+    fn test_gen_deps_module_dev_and_optional_regular_dep() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "[dependencies]").unwrap();
+        writeln!(
+            temp_file,
+            r#"optional_dep = {{ version = "1.0", optional = true }}"#
+        )
+        .unwrap();
+        writeln!(temp_file, "\n[dev-dependencies]").unwrap();
+        writeln!(temp_file, r#"optional_dep = "1.0""#).unwrap();
+        writeln!(temp_file, "\n[features]").unwrap();
+        writeln!(temp_file, r#"my_feature = ["dep:optional_dep"]"#).unwrap();
+        temp_file.flush().unwrap();
+
+        let stageleft_name = syn::Ident::new("stageleft", Span::call_site());
+        let deps_module = gen_deps_module(stageleft_name, temp_file.path(), Some("test_mode"));
+        let generated_code = quote::quote!(#deps_module).to_string();
+
+        assert!(
+            generated_code.contains(
+                r#"# [cfg (any (any (feature = "my_feature") , any (feature = "test_mode")))] pub use optional_dep ;"#
+            ),
+            "Dep should be available if either its enabling feature or the test-mode feature is enabled: {}",
+            generated_code
+        );
+        assert_eq!(
+            generated_code.matches("pub use optional_dep").count(),
+            1,
+            "Dep should only be re-exported once: {}",
+            generated_code
+        );
+    }
+
+    #[test]
+    fn test_gen_deps_module_target_specific_dev_dependency() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "[target.'cfg(unix)'.dev-dependencies]").unwrap();
+        writeln!(temp_file, r#"unix_dev = "1.0""#).unwrap();
+        temp_file.flush().unwrap();
+
+        let stageleft_name = syn::Ident::new("stageleft", Span::call_site());
+        let deps_module = gen_deps_module(stageleft_name, temp_file.path(), Some("test_mode"));
+        let generated_code = quote::quote!(#deps_module).to_string();
+
+        assert!(
+            generated_code.contains(
+                r#"# [cfg (all (unix , any (feature = "test_mode")))] pub use unix_dev ;"#
+            ),
+            "Target-specific dev dep should be gated by both the target cfg and the test-mode feature: {}",
+            generated_code
+        );
+    }
+
+    #[test]
+    fn test_gen_deps_module_ignores_dev_dependencies_without_test_mode() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "[dev-dependencies]").unwrap();
+        writeln!(temp_file, r#"dev_only = "1.0""#).unwrap();
+        writeln!(temp_file, "\n[target.'cfg(unix)'.dev-dependencies]").unwrap();
+        writeln!(temp_file, r#"unix_dev = "1.0""#).unwrap();
+        temp_file.flush().unwrap();
+
+        let stageleft_name = syn::Ident::new("stageleft", Span::call_site());
+        let deps_module = gen_deps_module(stageleft_name, temp_file.path(), None);
+        let generated_code = quote::quote!(#deps_module).to_string();
+
+        assert!(
+            !generated_code.contains("pub use"),
+            "Dev deps should not be re-exported without a test-mode feature: {}",
             generated_code
         );
     }
