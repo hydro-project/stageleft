@@ -170,6 +170,35 @@ fn captured_time<'a>(
 }
 
 #[stageleft::entry]
+fn captured_options<'a>(
+    _ctx: BorrowBounds<'a>,
+) -> impl Quoted<'a, (Option<i32>, Option<i32>, Option<&'static str>)> {
+    let some_int = Some(42i32);
+    let none_int: Option<i32> = None;
+    let some_string: Option<String> = Some("hello".to_owned());
+    q!((some_int, none_int, some_string))
+}
+
+#[stageleft::entry]
+fn captured_nested_options<'a>(
+    _ctx: BorrowBounds<'a>,
+) -> impl Quoted<'a, (Option<Option<u32>>, Option<Option<u32>>)> {
+    let nested_some: Option<Option<u32>> = Some(Some(7));
+    let nested_inner_none: Option<Option<u32>> = Some(None);
+    q!((nested_some, nested_inner_none))
+}
+
+#[stageleft::entry]
+fn captured_none_no_inference<'a>(_ctx: BorrowBounds<'a>) -> impl Quoted<'a, (bool, u32)> {
+    let missing: Option<u8> = None;
+    // Nothing at the splice site pins down the option's inner type: `is_none`
+    // works for any `Option<T>`, and `unwrap_or(0).leading_zeros()` would
+    // otherwise fall back to `i32` (yielding 32 instead of u8's 8). This only
+    // works because a captured `None` splices with an explicit type.
+    q!((missing.is_none(), missing.unwrap_or(0).leading_zeros()))
+}
+
+#[stageleft::entry]
 fn literal_args<'a>(
     _ctx: BorrowBounds<'a>,
     flag: bool,
@@ -294,6 +323,21 @@ mod tests {
     }
 
     #[test]
+    fn test_captured_options() {
+        assert_eq!(captured_options!(), (Some(42), None, Some("hello")));
+    }
+
+    #[test]
+    fn test_captured_nested_options() {
+        assert_eq!(captured_nested_options!(), (Some(Some(7)), Some(None)));
+    }
+
+    #[test]
+    fn test_captured_none_no_inference() {
+        assert_eq!(captured_none_no_inference!(), (true, 8));
+    }
+
+    #[test]
     fn test_literal_args() {
         assert_eq!(literal_args!(true, 'x', 2.5), (true, 'x', 5.0f64));
     }
@@ -388,6 +432,18 @@ mod tests {
         // Note windows only supports 100 nanosecond precision (2nd arg): https://doc.rust-lang.org/std/time/struct.SystemTime.html#platform-specific-behavior
         let after_epoch = std::time::UNIX_EPOCH + std::time::Duration::new(1_700_000_000, 200);
         let quoted = q!((b, c, f, nan, dur, before_epoch, after_epoch));
+        let expr = quoted.splice_untyped_ctx(&());
+        let file: syn::File = syn::parse_quote!(fn main() { #expr });
+        insta::assert_snapshot!(prettyplease::unparse(&file));
+    }
+
+    #[test]
+    fn test_splice_snapshot_option_captures() {
+        let some_int = Some(42i32);
+        let none_int: Option<i32> = None;
+        let some_string = Some("hello".to_owned());
+        let nested = Some(Some(1.5f64));
+        let quoted = q!((some_int, none_int, some_string, nested));
         let expr = quoted.splice_untyped_ctx(&());
         let file: syn::File = syn::parse_quote!(fn main() { #expr });
         insta::assert_snapshot!(prettyplease::unparse(&file));
