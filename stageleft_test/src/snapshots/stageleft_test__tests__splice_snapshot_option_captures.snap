@@ -1,0 +1,21 @@
+---
+source: stageleft_test/src/lib.rs
+expression: "prettyplease::unparse(&file)"
+---
+fn main() {
+    {
+        use crate::__staged::__deps::*;
+        use crate::__staged::tests::*;
+        {
+            let nested__free = ::core::option::Option::Some(
+                ::core::option::Option::Some(
+                    ::core::primitive::f64::from_bits(4609434218613702656u64),
+                ),
+            );
+            let none_int__free = ::core::option::Option::<i32>::None;
+            let some_int__free = ::core::option::Option::Some(42i32);
+            let some_string__free = ::core::option::Option::Some("hello");
+            (some_int__free, none_int__free, some_string__free, nested__free)
+        }
+    }
+}

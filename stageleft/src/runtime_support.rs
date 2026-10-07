@@ -330,6 +330,53 @@ impl<Ctx> FreeVariableWithContextWithProps<Ctx, ()> for String {
     }
 }
 
+/// Free-variable capture for `Option<T>` where the inner `T` is itself
+/// capturable. `Some(v)` splices as `::core::option::Option::Some(<v>)`.
+/// `None` splices as `::core::option::Option::<T>::None`, with the inner
+/// type named explicitly via [`crate::quote_type`] so that the spliced code
+/// does not depend on type inference at the splice site (which could fail,
+/// or silently drift to another type via integer fallback). Types that
+/// `quote_type` cannot name (e.g. closures) degrade to `_` and fall back to
+/// inference.
+impl<Ctx, T: FreeVariableWithContextWithProps<Ctx, ()>> FreeVariableWithContextWithProps<Ctx, ()>
+    for Option<T>
+{
+    type O = Option<T::O>;
+
+    fn to_tokens(self, ctx: &Ctx) -> (QuoteTokens, ()) {
+        match self {
+            Some(inner) => {
+                let (tokens, ()) = FreeVariableWithContextWithProps::to_tokens(inner, ctx);
+                let expr = tokens.expr.unwrap_or_else(|| {
+                    panic!("cannot capture an `Option` whose inner value has no expression")
+                });
+                (
+                    QuoteTokens {
+                        prelude: tokens.prelude,
+                        expr: Some(quote!(::core::option::Option::Some(#expr))),
+                    },
+                    (),
+                )
+            }
+            None => {
+                let inner_type = crate::quote_type::<T::O>();
+                (
+                    QuoteTokens {
+                        prelude: None,
+                        expr: Some(quote!(::core::option::Option::<#inner_type>::None)),
+                    },
+                    (),
+                )
+            }
+        }
+    }
+}
+
+impl<'a, Ctx, T: FreeVariableWithContextWithProps<Ctx, ()>>
+    crate::QuotedWithContextWithProps<'a, Option<T::O>, Ctx, ()> for Option<T>
+{
+}
+
 pub struct Import<T> {
     module_path: &'static str,
     crate_name: &'static str,
@@ -550,6 +597,47 @@ mod tests {
         assert_eq!(u32::parse_from_literal(&parse("(42)")), 42);
         assert!(bool::parse_from_literal(&parse("(true)")));
         assert_eq!(char::parse_from_literal(&parse("('x')")), 'x');
+    }
+
+    #[test]
+    fn option_capture_tokens() {
+        fn capture_tokens<T: FreeVariableWithContextWithProps<(), ()>>(value: T) -> String {
+            let (tokens, ()) = FreeVariableWithContextWithProps::<(), ()>::to_tokens(value, &());
+            tokens
+                .expr
+                .unwrap()
+                .to_string()
+                .replace(char::is_whitespace, "")
+        }
+
+        assert_eq!(
+            capture_tokens(Some(5i32)),
+            "::core::option::Option::Some(5i32)"
+        );
+        assert_eq!(
+            capture_tokens(None::<i32>),
+            "::core::option::Option::<i32>::None"
+        );
+        assert_eq!(
+            capture_tokens(Some("hi".to_owned())),
+            "::core::option::Option::Some(\"hi\")"
+        );
+        assert_eq!(
+            capture_tokens(None::<String>),
+            "::core::option::Option::<&str>::None"
+        );
+        assert_eq!(
+            capture_tokens(Some(Some(true))),
+            "::core::option::Option::Some(::core::option::Option::Some(true))"
+        );
+        assert_eq!(
+            capture_tokens(Some(None::<bool>)),
+            "::core::option::Option::Some(::core::option::Option::<bool>::None)"
+        );
+        assert_eq!(
+            capture_tokens(None::<Option<std::time::Duration>>),
+            "::core::option::Option::<core::option::Option<core::time::Duration>>::None"
+        );
     }
 
     #[test]
