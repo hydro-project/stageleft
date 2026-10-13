@@ -10,6 +10,17 @@ type ReexportsSet = LazyLock<RwLock<Vec<(Vec<String>, Vec<String>)>>>;
 static PRIVATE_REEXPORTS: ReexportsSet = LazyLock::new(|| {
     RwLock::new(vec![
         (vec!["alloc".into()], vec!["std".into()]),
+        // Nightly rustc (1.100+) moved `Rc`/`Arc` (and their `Weak`s) into a private
+        // `alloc::rcs` module. Since `alloc -> std` is applied first and then the
+        // rewrite recurses, these rules match the already-rewritten `std::rcs::...`.
+        (
+            vec!["std".into(), "rcs".into(), "rc".into()],
+            vec!["std".into(), "rc".into()],
+        ),
+        (
+            vec!["std".into(), "rcs".into(), "arc".into()],
+            vec!["std".into(), "sync".into()],
+        ),
         (
             vec!["core".into(), "ops".into(), "range".into()],
             vec!["core".into(), "ops".into()],
@@ -234,4 +245,42 @@ pub fn quote_type<T>() -> syn::Type {
     RewriteCrateWithStaged.visit_type_mut(&mut t_type);
 
     t_type
+}
+
+#[cfg(test)]
+mod tests {
+    use quote::ToTokens;
+
+    use super::quote_type;
+
+    fn quoted<T>() -> String {
+        quote_type::<T>().to_token_stream().to_string()
+    }
+
+    /// Regression test for <https://github.com/hydro-project/stageleft/issues/106>.
+    ///
+    /// Nightly rustc reports `Rc`/`Arc` (and both `Weak`s) under a private
+    /// `alloc::rcs` module. On both stable and nightly, the quoted path must be
+    /// the public re-export.
+    #[test]
+    fn rc_and_arc_quote_to_public_paths() {
+        assert_eq!(quoted::<std::rc::Rc<u64>>(), "std :: rc :: Rc < u64 >");
+        assert_eq!(quoted::<std::rc::Weak<u64>>(), "std :: rc :: Weak < u64 >");
+        assert_eq!(
+            quoted::<std::sync::Arc<u64>>(),
+            "std :: sync :: Arc < u64 >"
+        );
+        assert_eq!(
+            quoted::<std::sync::Weak<u64>>(),
+            "std :: sync :: Weak < u64 >"
+        );
+    }
+
+    #[test]
+    fn nested_rc_and_arc_quote_to_public_paths() {
+        assert_eq!(
+            quoted::<std::sync::Arc<std::rc::Rc<Vec<u8>>>>(),
+            "std :: sync :: Arc < std :: rc :: Rc < std :: vec :: Vec < u8 > > >"
+        );
+    }
 }
