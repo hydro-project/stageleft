@@ -1,5 +1,5 @@
-use std::collections::BTreeMap;
-use std::path::Path;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 use std::{env, fs};
 
 use proc_macro2::Span;
@@ -63,12 +63,57 @@ impl<'a> Visit<'a> for GenMacroVistor {
     }
 }
 
+/// Parses `lib_path` and recursively inlines its out-of-line modules, like
+/// [`syn_inline_mod::parse_and_inline_modules`], but also returns the set of source files that were
+/// read from disk while doing so (the root file plus every inlined module file).
+///
+/// The returned paths are suitable for `cargo::rerun-if-changed` when emitted from a build script:
+/// module files are resolved relative to the root file's location, so if `lib_path` is relative to
+/// the package root (the build script's working directory, and what Cargo resolves relative
+/// `rerun-if-changed` paths against) then so is every returned path. Paths are deliberately *not*
+/// made absolute or canonicalized: Cargo strips the package root from `rerun-if-changed` paths
+/// before storing them in the fingerprint so that build directories stay relocatable, which only
+/// works if the paths share the package root's textual prefix (e.g. no resolved symlinks).
+/// Duplicates are removed, and paths that do not exist are dropped since Cargo treats a missing
+/// `rerun-if-changed` path as always-dirty.
+///
+/// Watching exactly these files (rather than the whole `src` directory) is sufficient to catch
+/// every change to the inlined source: a newly added module file always comes with an edit to an
+/// already-watched file (the `mod foo;` or `#[path = "..."]` declaration that pulls it in), and
+/// removing or editing a file is caught directly. Non-Rust files living under `src` (e.g. insta
+/// `.snap` snapshots) are never read and therefore no longer trigger a rerun.
+fn parse_and_inline_with_sources(lib_path: &Path) -> (syn::File, BTreeSet<PathBuf>) {
+    let mut sources = BTreeSet::new();
+    let flow_lib = syn_inline_mod::InlinerBuilder::new()
+        .inline_with_callback(lib_path, |path, _contents| {
+            if path.is_file() {
+                sources.insert(path.to_path_buf());
+            }
+        })
+        .unwrap()
+        .into_output_and_errors()
+        .0;
+    (flow_lib, sources)
+}
+
+/// Emits one `cargo::rerun-if-changed` line per watched source file.
+fn emit_rerun_if_changed_sources(sources: &BTreeSet<PathBuf>) {
+    for path in sources {
+        println!("cargo::rerun-if-changed={}", path.display());
+    }
+}
+
 pub fn gen_macro(staged_path: &Path, crate_name: &str) {
     let out_dir = env::var_os("OUT_DIR").unwrap();
     let dest_path = Path::new(&out_dir).join("lib_macro.rs");
 
-    let flow_lib =
-        syn_inline_mod::parse_and_inline_modules(&staged_path.join("src").join("lib.rs"));
+    // Watch only the source files that are actually inlined, not the whole staged crate directory,
+    // so that unrelated files (e.g. snapshots under `src`) do not rerun this build script. `build.rs`
+    // is watched separately below, and nothing else is read. `staged_path` is used as given (usually
+    // relative to this package, like `../foo`) rather than canonicalized, see
+    // `parse_and_inline_with_sources`.
+    let (flow_lib, sources) =
+        parse_and_inline_with_sources(&staged_path.join("src").join("lib.rs"));
     let mut visitor = GenMacroVistor {
         exported_macros: Default::default(),
         current_mod: parse_quote!(crate),
@@ -111,10 +156,7 @@ pub fn gen_macro(staged_path: &Path, crate_name: &str) {
     );
     println!("cargo::rustc-cfg=stageleft_macro");
 
-    println!(
-        "cargo::rerun-if-changed={}",
-        staged_path_absolute.to_string_lossy()
-    );
+    emit_rerun_if_changed_sources(&sources);
 }
 
 struct GenFinalPubVisitor {
@@ -737,7 +779,8 @@ fn gen_deps_module(
 /// all APIs made public so they can be resolved when quoted code is spliced.
 ///
 /// # Arguments
-/// * `lib_path` - path to the root Rust file, usually to `lib.rs`.
+/// * `flow_lib_pub` - the crate's root file with all modules inlined, as produced by
+///   [`syn_inline_mod::parse_and_inline_modules`] or [`parse_and_inline_with_sources`].
 /// * `orig_crate_path` - Rust module path to the staged crate. Usually `crate`, but may be the staged crate name if
 ///   the entry and staged crate/target are different.
 /// * `is_staged_separate` - Whether the staged crate will be included in a separate crate (instead of the original
@@ -745,7 +788,7 @@ fn gen_deps_module(
 /// * `test_mode_feature` - If `Some("FEATURE")`, `#[cfg(test)]` modules will be gated with
 ///   `#[cfg(feature = "FEATURE")]` instead of being fully removed.
 fn gen_staged_mod(
-    lib_path: &Path,
+    mut flow_lib_pub: syn::File,
     orig_crate_path: syn::Path,
     test_mode_feature: Option<String>,
     is_staged_separate: bool,
@@ -755,7 +798,6 @@ fn gen_staged_mod(
         "`orig_crate_path` may not have trailing `::`"
     );
 
-    let mut flow_lib_pub = syn_inline_mod::parse_and_inline_modules(lib_path);
     let crate_root_modules = flow_lib_pub
         .items
         .iter()
@@ -808,7 +850,8 @@ pub fn gen_staged_trybuild(
         manifest_path,
         test_mode_feature.as_deref(),
     );
-    let mut flow_lib_pub = gen_staged_mod(lib_path, orig_crate_path, test_mode_feature, true);
+    let flow_lib = syn_inline_mod::parse_and_inline_modules(lib_path);
+    let mut flow_lib_pub = gen_staged_mod(flow_lib, orig_crate_path, test_mode_feature, true);
 
     flow_lib_pub.items.push(syn::Item::Mod(deps_mod));
     flow_lib_pub
@@ -834,51 +877,16 @@ pub fn gen_staged(gen_pub: bool) {
         .map(Path::new)
         .unwrap_or_else(|| Path::new("src/lib.rs"));
 
-    // Watch the directory containing the library root (usually `src`) so that changes to any
-    // module file trigger a rebuild. Blindly emitting `rerun-if-changed=src` would cause
-    // spurious rebuilds when a custom lib root is used and `src` does not exist, since Cargo
-    // treats missing paths as always-dirty.
-    let watch_path = lib_path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty() && parent.is_dir())
-        .unwrap_or(lib_path);
-    println!("cargo::rerun-if-changed={}", watch_path.display());
-
-    // Parse source once
-    let flow_lib = syn_inline_mod::parse_and_inline_modules(lib_path);
-
-    // Generate lib_pub.rs if requested
-    if gen_pub {
-        let flow_lib_pub = gen_staged_mod(lib_path, parse_quote!(crate), None, false);
-
-        fs::write(
-            Path::new(&out_dir).join("lib_pub.rs"),
-            prettyplease::unparse(&flow_lib_pub),
-        )
-        .unwrap();
-    }
-
-    // Generate staged_deps.rs
-    // Remove `_tool` suffix.
-    let main_pkg_name = env!("CARGO_PKG_NAME").rsplit_once(['-', '_']).unwrap().0;
-    let stageleft_crate = proc_macro_crate::crate_name(main_pkg_name).unwrap_or_else(|_| {
-        panic!("Expected stageleft {main_pkg_name} package to be present in `Cargo.toml`")
-    });
-    let stageleft_name = match stageleft_crate {
-        proc_macro_crate::FoundCrate::Itself => syn::Ident::new(main_pkg_name, Span::call_site()),
-        proc_macro_crate::FoundCrate::Name(name) => syn::Ident::new(&name, Span::call_site()),
-    };
-
-    let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
-    let manifest_path = Path::new(&manifest_dir).join("Cargo.toml");
-
-    let deps_file = gen_deps_module(stageleft_name, &manifest_path, None);
-
-    fs::write(
-        Path::new(&out_dir).join("staged_deps.rs"),
-        prettyplease::unparse(&parse_quote!(#deps_file)),
-    )
-    .unwrap();
+    // Parse the source tree once, collecting the files that were read so that we can watch exactly
+    // those. Watching the whole `src` directory would rerun this build script (and recompile the
+    // crate) whenever *any* file under it is written, including non-Rust files such as insta
+    // snapshots. Per-file watching cannot miss a change to the inlined source, since adding a new
+    // module file always requires editing an already-watched file (its `mod foo;` or `#[path]`
+    // declaration). `Cargo.toml` and `build.rs` are watched by `gen_final!`, and `__deps` is
+    // generated from `Cargo.toml`, so no other inputs need watching. `lib_path` is relative to the
+    // package root (the build script's working directory), so the emitted paths are too.
+    let (flow_lib, sources) = parse_and_inline_with_sources(lib_path);
+    emit_rerun_if_changed_sources(&sources);
 
     // Collect test modules for fallback detection at splice time
     struct TestModCollector {
@@ -909,6 +917,39 @@ pub fn gen_staged(gen_pub: bool) {
         test_modules: Vec::new(),
     };
     Visit::visit_file(&mut collector, &flow_lib);
+
+    // Generate lib_pub.rs if requested, reusing the already-parsed tree.
+    if gen_pub {
+        let flow_lib_pub = gen_staged_mod(flow_lib, parse_quote!(crate), None, false);
+
+        fs::write(
+            Path::new(&out_dir).join("lib_pub.rs"),
+            prettyplease::unparse(&flow_lib_pub),
+        )
+        .unwrap();
+    }
+
+    // Generate staged_deps.rs
+    // Remove `_tool` suffix.
+    let main_pkg_name = env!("CARGO_PKG_NAME").rsplit_once(['-', '_']).unwrap().0;
+    let stageleft_crate = proc_macro_crate::crate_name(main_pkg_name).unwrap_or_else(|_| {
+        panic!("Expected stageleft {main_pkg_name} package to be present in `Cargo.toml`")
+    });
+    let stageleft_name = match stageleft_crate {
+        proc_macro_crate::FoundCrate::Itself => syn::Ident::new(main_pkg_name, Span::call_site()),
+        proc_macro_crate::FoundCrate::Name(name) => syn::Ident::new(&name, Span::call_site()),
+    };
+
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
+    let manifest_path = Path::new(&manifest_dir).join("Cargo.toml");
+
+    let deps_file = gen_deps_module(stageleft_name, &manifest_path, None);
+
+    fs::write(
+        Path::new(&out_dir).join("staged_deps.rs"),
+        prettyplease::unparse(&parse_quote!(#deps_file)),
+    )
+    .unwrap();
 
     let test_mod_strs = &collector.test_modules;
     let crate_name_str = env::var("CARGO_PKG_NAME").unwrap().replace('-', "_");
@@ -963,6 +1004,70 @@ mod tests {
     use super::*;
     use std::io::Write;
     use tempfile::NamedTempFile;
+
+    /// The watch set must contain exactly the Rust files read while inlining the module tree, and
+    /// must not include unrelated files that happen to live under `src` (e.g. insta snapshots).
+    #[test]
+    fn test_parse_and_inline_with_sources_watches_only_inlined_rust_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
+        fs::create_dir_all(src.join("b")).unwrap();
+        fs::create_dir_all(src.join("snapshots")).unwrap();
+
+        fs::write(src.join("lib.rs"), "mod a;\nmod b;\n").unwrap();
+        fs::write(src.join("a.rs"), "pub fn a() {}\n").unwrap();
+        fs::write(src.join("b").join("mod.rs"), "pub fn b() {}\n").unwrap();
+        fs::write(src.join("snapshots").join("x.snap"), "---\nsnapshot\n").unwrap();
+        // An unrelated Rust file that is not reachable from `lib.rs` must not be watched either.
+        fs::write(src.join("unused.rs"), "pub fn unused() {}\n").unwrap();
+
+        // Pass the root through a non-canonical prefix (`<tmp>/./src/lib.rs`): every returned path must
+        // be derived from the root path *as given*, not canonicalized, so that Cargo can strip the
+        // package-root prefix when fingerprinting (see `parse_and_inline_with_sources`).
+        let root = tmp.path().join(".").join("src").join("lib.rs");
+        let (flow_lib, sources) = parse_and_inline_with_sources(&root);
+
+        let expected: BTreeSet<PathBuf> = [
+            root.clone(),
+            root.with_file_name("a.rs"),
+            root.with_file_name("b").join("mod.rs"),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(sources, expected);
+        assert!(
+            !sources
+                .iter()
+                .any(|p| p.extension().is_some_and(|ext| ext == "snap")),
+            "snapshot files must not be watched: {sources:?}"
+        );
+
+        // The modules were actually inlined into the returned tree.
+        let inlined = quote::quote!(#flow_lib).to_string();
+        assert!(inlined.contains("pub fn a ()"), "{inlined}");
+        assert!(inlined.contains("pub fn b ()"), "{inlined}");
+    }
+
+    /// A file pulled in twice via `#[path]` is only watched once.
+    #[test]
+    fn test_parse_and_inline_with_sources_deduplicates() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(
+            src.join("lib.rs"),
+            "#[path = \"shared.rs\"]\nmod a;\n#[path = \"shared.rs\"]\nmod b;\n",
+        )
+        .unwrap();
+        fs::write(src.join("shared.rs"), "pub fn shared() {}\n").unwrap();
+
+        let (_, sources) = parse_and_inline_with_sources(&src.join("lib.rs"));
+
+        let expected: BTreeSet<PathBuf> = [src.join("lib.rs"), src.join("shared.rs")]
+            .into_iter()
+            .collect();
+        assert_eq!(sources, expected);
+    }
 
     #[test]
     fn test_gen_staged_trybuild_lifts_cfg_attr_test() {
